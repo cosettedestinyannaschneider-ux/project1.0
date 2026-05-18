@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 环境变量（含密钥）
+.env
+
+# 上传文件与报告
+uploads/
+
+# 编译产物
+unpackage/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

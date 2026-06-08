@@ -59,6 +59,7 @@ erDiagram
     TEXT production_process "生产工艺等扩展字段JSON"
     VARCHAR inspector_name "排查人员"
     DATE inspection_date "排查日期"
+    VARCHAR project_name "项目名称"
     ENUM status "active|archived"
     TIMESTAMP created_at
     TIMESTAMP updated_at

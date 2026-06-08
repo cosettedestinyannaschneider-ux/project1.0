@@ -21,3 +21,8 @@ Thumbs.db
 
 # 日志
 *.log
+
+# 临时转换文件
+template_converted.docx
+template_unpacked/
+~$*

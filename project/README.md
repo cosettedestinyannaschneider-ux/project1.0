@@ -30,6 +30,7 @@
 设计文档详见：[DESIGN_DOC.md](./DESIGN_DOC.md)
 接口文档详见：[API_DOC.md](./API_DOC.md)
 部署文档详见：[DEPLOY.md](./DEPLOY.md)
+稳定演示版本说明详见：[STABLE_VERSION.md](./STABLE_VERSION.md)
 数据库 DDl 详见：[database/schema.sql](./database/schema.sql)
 ER 图详见：[../er-diagram.md](../er-diagram.md)
 
@@ -47,7 +48,7 @@ ER 图详见：[../er-diagram.md](../er-diagram.md)
 - **后端**：Node.js + Express + MySQL + 字节跳动 Ark/Doubao SDK
 - **前端框架**：**uni-app (Vue 3 + Vite)**
 - **UI 设计**：蓝白极简风格，响应式卡片设计
-- **文档处理**：`pdfkit` (PDF 生成) + `docx` (Word 生成)
+- **文档处理**：Word 模板填充 + Word 导出 PDF；`pdfkit` 作为 PDF 降级方案
 - **字体支持**：内置 `simhei.ttf` 完美支持中文字符
 
 ## 目录结构
@@ -102,7 +103,7 @@ ER 图详见：[../er-diagram.md](../er-diagram.md)
 ### 2. 统一前端 (uni-app)
 
 1. 使用 **VS Code** 或 **HBuilderX** 导入 `uni-app-frontend` 目录。
-2. **安装依赖**：在 `uni-app-frontend` 目录下运行 `npm install`。
+2. **安装依赖**：在 `uni-app-frontend` 目录下运行 `npm ci`（已提交 `package-lock.json`，可保证本地与 CI 依赖一致；仅在需要更新依赖时使用 `npm install`）。
 3. **运行至网页 (H5) [重要]**：
    - 必须通过命令行运行：`npm run dev:h5`。
    - **严禁直接右键 open with live server 或直接打开 index.html**，否则 Vite 代理将失效，导致上传报错。
@@ -111,7 +112,10 @@ ER 图详见：[../er-diagram.md](../er-diagram.md)
    - 运行命令：`npm run dev:mp-weixin`。
    - 使用 **微信开发者工具** 导入 `uni-app-frontend/unpackage/dist/dev/mp-weixin` 目录。
    - **注意**：小程序端如无法访问后端，请在登录页进入“服务器设置”填写电脑局域网 IP（开发联调），或使用已配置 HTTPS 的正式域名（真机/上线必需）。
-5. **重要配置**：在微信开发者工具中勾选“不校验合法域名”。
+5. **构建验证**：
+   - H5 生产构建：`npm run build:h5`。
+   - 微信小程序构建：`npm run build:mp-weixin`。
+6. **重要配置**：在微信开发者工具中勾选“不校验合法域名”。
 
 ## 多端运行说明（H5 + 微信小程序）
 

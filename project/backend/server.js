@@ -296,8 +296,19 @@ app.post('/api/hazard/analyze', async (req, res) => {
     // 使用模板化报告（优先），降级到旧方法
     let wordPath, pdfPath
     if (enterprise) {
-      wordPath = await docService.generateTemplateReport({ enterprise, result, imagePaths: imageAbsPaths })
-      pdfPath = await docService.generatePDF(prompt, result, imageAbsPaths)
+      wordPath = await docService.generateTemplateReport({
+        enterprise,
+        prompt,
+        result,
+        imagePaths: imageAbsPaths,
+      })
+      pdfPath = await docService.generateTemplatePDF({
+        enterprise,
+        prompt,
+        result,
+        imagePaths: imageAbsPaths,
+        wordPath,
+      })
     } else {
       wordPath = await docService.generateWord(prompt, result, imageAbsPaths)
       pdfPath = await docService.generatePDF(prompt, result, imageAbsPaths)
@@ -326,20 +337,24 @@ app.post('/api/hazard/analyze', async (req, res) => {
 app.post('/api/process', upload.single('file'), async (req, res) => {
   const { user_id, prompt, session_id, isInspection, model_id } = req.body
   const filePath = req.file ? req.file.path : null
-  const isInspectionFlag = isInspection === 'true' || isInspection === true
+  const isInspectionFlag = isInspection === 'true' || isInspection === true || !!filePath
   const userId = Number(user_id)
   if (!userId) return res.fail(ErrorCode.PARAM_MISSING, '缺少 user_id')
 
   try {
     console.log(`[Server] Processing: prompt=${prompt}, sessionId=${session_id}, isInspection=${isInspectionFlag}`)
     const modelId = model_id ? Number(model_id) : null
-    const { result, sessionId } = await aiService.processAI(prompt, filePath, session_id, isInspectionFlag, modelId)
+    const { result, sessionId } = await aiService.processAI(prompt, filePath, session_id, isInspectionFlag, modelId, userId)
     console.log(`[Server] AI result length: ${result ? result.length : 0}`)
 
-    const wordPath = await docService.generateWord(prompt, result, filePath)
-    const pdfPath = await docService.generatePDF(prompt, result, filePath)
+    const enterprise = await enterpriseDal.findByUserId(userId)
+    const wordPath = await docService.generateWord(prompt, result, filePath, { enterprise })
+    const pdfPath = await docService.generatePDF(prompt, result, filePath, { enterprise, wordPath })
 
-    const historyId = await historyDal.createHistory(userId, prompt, result, wordPath, pdfPath, filePath, sessionId)
+    const historyId = await historyDal.createHistory(userId, prompt, result, wordPath, pdfPath, filePath, sessionId, {
+      enterpriseId: enterprise ? enterprise.id : null,
+      title: enterprise ? `${enterprise.name} - 隐患排查报告` : null,
+    })
     await logDal.logAction(userId, C.ACTION_AI_INSPECTION, { prompt, hasImage: !!filePath })
 
     res.success({ result, wordPath, pdfPath, sessionId, id: historyId })
@@ -421,15 +436,26 @@ app.post('/api/history/update-result', async (req, res) => {
     if (record.enterprise_id) {
       const enterprise = await enterpriseDal.findById(record.enterprise_id)
       if (enterprise) {
-        wordPath = await docService.generateTemplateReport({ enterprise, result, imagePaths: Array.isArray(reportImages) ? reportImages : [] })
-        pdfPath = await docService.generatePDF(record.prompt, result, reportImages)
+        wordPath = await docService.generateTemplateReport({
+          enterprise,
+          prompt: record.prompt,
+          result,
+          imagePaths: Array.isArray(reportImages) ? reportImages : [],
+        })
+        pdfPath = await docService.generateTemplatePDF({
+          enterprise,
+          prompt: record.prompt,
+          result,
+          imagePaths: Array.isArray(reportImages) ? reportImages : [],
+          wordPath,
+        })
       } else {
         wordPath = await docService.generateWord(record.prompt, result, reportImages)
         pdfPath = await docService.generatePDF(record.prompt, result, reportImages)
       }
     } else {
       wordPath = await docService.generateWord(record.prompt, result, reportImages)
-      pdfPath = await docService.generatePDF(record.prompt, result, reportImages)
+      pdfPath = await docService.generatePDF(record.prompt, result, reportImages, { wordPath })
     }
 
     await historyDal.updateResult(id, result, wordPath, pdfPath)

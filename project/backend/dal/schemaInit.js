@@ -12,17 +12,17 @@ const schemaInit = {
 
     // FK 依赖顺序：enterprises → departments → users → user_permissions
     //              → sessions → inspection_reports
-    //              → inspection_report_images → hazard_images → action_logs
+    //              → hazard_images → inspection_report_images → action_logs
     //              → knowledge_categories → knowledge
-    //              → ai_model_configs → report_templates
+    //              → ai_model_configs → report_templates → backup_records
     await this.step03_enterprises()
     await this.step01_departments()
     await this.step02_users()
     await this.step02UserPermissions()
     await this.step04_sessions()
     await this.step05_inspectionReports()
-    await this.step06_inspectionReportImages()
     await this.step07_hazardImages()
+    await this.step06_inspectionReportImages()
     await this.step08_knowledgeCategories()
     await this.step09_knowledge()
     await this.step10_actionLogs()
@@ -151,7 +151,7 @@ const schemaInit = {
   async step03_enterprises() {
     if (!await this._hasTable('enterprises')) {
       await db.execute(`
-        CREATE TABLE enterprises (
+        CREATE TABLE IF NOT EXISTS enterprises (
           id                INT           NOT NULL AUTO_INCREMENT,
           user_id           INT           DEFAULT NULL,
           name              VARCHAR(200)  NOT NULL,
@@ -172,8 +172,8 @@ const schemaInit = {
           updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           PRIMARY KEY (id),
           KEY idx_enterprises_user_id (user_id),
-          KEY idx_enterprises_name (name),
-          KEY idx_enterprises_region (region),
+          KEY idx_enterprises_name (name(100)),
+          KEY idx_enterprises_region (region(100)),
           KEY idx_enterprises_inspection_status (inspection_status),
           KEY idx_enterprises_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -283,6 +283,7 @@ const schemaInit = {
     if (hasReports || hasResults) {
       for (const colDef of [
         'enterprise_id INT DEFAULT NULL',
+        'session_id VARCHAR(64) DEFAULT NULL',
         'title VARCHAR(300) DEFAULT NULL',
         "status VARCHAR(20) NOT NULL DEFAULT 'completed'",
         'updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
@@ -290,6 +291,7 @@ const schemaInit = {
         await this._addColumn('inspection_reports', colDef)
       }
       // 确保 session_id 迁移无问题的索引
+      await this._addIndex('inspection_reports', 'idx_ir_session_id', 'KEY idx_ir_session_id (session_id)')
       await this._addIndex('inspection_reports', 'idx_ir_enterprise_id', 'KEY idx_ir_enterprise_id (enterprise_id)')
       await this._addIndex('inspection_reports', 'idx_ir_status', 'KEY idx_ir_status (status)')
     }

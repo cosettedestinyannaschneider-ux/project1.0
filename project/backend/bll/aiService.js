@@ -22,6 +22,30 @@ require('dotenv').config()
  */
 const createClient = (baseUrl, apiKey) => new OpenAI({ baseURL: baseUrl, apiKey })
 
+const normalizeValue = (value) => String(value || '').trim()
+
+const isPlaceholderModelName = (modelName) => {
+  const normalized = normalizeValue(modelName)
+  return !normalized || normalized === 'replace_with_your_model_id' || normalized === 'default'
+}
+
+const isPlaceholderApiKey = (apiKey) => {
+  const normalized = normalizeValue(apiKey)
+  return !normalized || normalized === 'replace_with_your_api_key'
+}
+
+const hasUsableClientConfig = ({ baseUrl, apiKey, modelName }) => (
+  !!normalizeValue(baseUrl) &&
+  !isPlaceholderApiKey(apiKey) &&
+  !isPlaceholderModelName(modelName)
+)
+
+const getEnvClientConfig = () => ({
+  baseUrl: normalizeValue(process.env.ARK_BASE_URL || C.ARK_BASE_URL),
+  apiKey: normalizeValue(process.env.ARK_API_KEY || ''),
+  modelName: normalizeValue(process.env.ARK_MODEL || ''),
+})
+
 /**
  * 获取当前激活的客户端（从 ai_model_configs 表读取）
  * 若无激活配置，降级使用 .env
@@ -29,7 +53,11 @@ const createClient = (baseUrl, apiKey) => new OpenAI({ baseURL: baseUrl, apiKey 
  */
 const getActiveClient = async () => {
   const config = await aiModelConfigDal.findActive()
-  if (config && config.api_key_encrypted && config.base_url) {
+  if (config && hasUsableClientConfig({
+    baseUrl: config.base_url,
+    apiKey: config.api_key_encrypted,
+    modelName: config.model_name,
+  })) {
     return {
       client: createClient(config.base_url, config.api_key_encrypted),
       modelName: config.model_name,
@@ -38,8 +66,8 @@ const getActiveClient = async () => {
   }
   // 降级：使用 .env
   return {
-    client: createClient(C.ARK_BASE_URL, process.env.ARK_API_KEY || ''),
-    modelName: process.env.ARK_MODEL || 'default',
+    client: createClient(getEnvClientConfig().baseUrl, getEnvClientConfig().apiKey),
+    modelName: getEnvClientConfig().modelName || 'default',
     configId: null,
   }
 }
@@ -52,6 +80,13 @@ const getActiveClient = async () => {
 const getClientById = async (modelId) => {
   const config = await aiModelConfigDal.findById(modelId)
   if (!config) throw new Error('模型配置不存在')
+  if (!hasUsableClientConfig({
+    baseUrl: config.base_url,
+    apiKey: config.api_key_encrypted,
+    modelName: config.model_name,
+  })) {
+    throw new Error('当前所选模型配置无效，请检查 API 地址、API Key 和模型 ID')
+  }
   return {
     client: createClient(config.base_url, config.api_key_encrypted),
     modelName: config.model_name,
@@ -72,6 +107,23 @@ const inferImageMime = (filePath) => {
   if (lower.endsWith('.gif')) return 'image/gif'
   if (lower.endsWith('.bmp')) return 'image/bmp'
   return 'image/jpeg'
+}
+
+const normalizeAIResultContent = (content, preferJson = false) => {
+  let text = String(content || '').trim()
+  if (text.startsWith('```json')) text = text.slice(7).trim()
+  else if (text.startsWith('```')) text = text.slice(3).trim()
+  if (text.endsWith('```')) text = text.slice(0, -3).trim()
+
+  if (preferJson) {
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2)
+    } catch (error) {
+      return text
+    }
+  }
+
+  return text
 }
 
 /**
@@ -110,18 +162,44 @@ const aiService = {
    * @param {number}  [modelId]    — 指定模型配置 ID（可选，不传用激活模型）
    * @returns {Promise<{result: string, sessionId: string}>}
    */
-  async processAI(prompt, filePath, sessionId = null, isInspection = false, modelId = null) {
+  async processAI(prompt, filePath, sessionId = null, isInspection = false, modelId = null, userId = null) {
     const actualSessionId = (sessionId && sessionId !== 'null' && sessionId !== 'undefined') ? sessionId : null
 
     let actualPrompt = prompt
     if (isInspection) {
       actualPrompt = `${prompt || '请进行智能隐患分析'}
-【系统指令】：你现在必须对提供的描述/图片进行智能隐患分析。
-请务必返回合法的JSON格式（不要带任何Markdown代码块，纯JSON字符串），包含以下三个字段：
-- hazard_description: 隐患描述
-- basis: 排查依据（法规/标准条款）
-- suggestion: 整改建议
-示例：{"hazard_description": "...", "basis": "...", "suggestion": "..."}`
+【系统指令】：你现在必须根据提供的描述/图片生成“安全生产隐患排查报告”可直接使用的结构化分析结果。
+请只返回合法 JSON，不要返回 Markdown，不要使用代码块，不要添加 JSON 之外的说明文字。
+必须使用中文填写，并严格包含以下字段：
+{
+  "items": [
+    {
+      "image_id": 1,
+      "hazard_description": "隐患描述，说明现场问题、可能后果和需要复核的关键点",
+      "hazard_level": "一般隐患或重大隐患",
+      "basis": "排查依据，格式必须为《法规或标准名称》（标准编号，如有）第X条/第X.X.X条：具体条款内容",
+      "suggestion": "具体、可执行的整改建议，并说明整改所依据的标准",
+      "responsibility": "建议责任部门或责任岗位"
+    }
+  ],
+  "reference_standards": [
+    {
+      "name": "法规或标准名称，不要带书名号",
+      "code": "标准编号或文件号，如 GB 2894-2008；法律法规可为空",
+      "clause": "条款号，如 第三十六条 或 4.5.2",
+      "content": "与本次隐患直接相关的条款内容，必须是报告可引用的完整表述"
+    }
+  ],
+  "comprehensive_opinion": {
+    "improvement_directions": [
+      { "title": "改进方向标题", "content": "结合本次隐患提出的管理改进建议" }
+    ],
+    "general_suggestions": "综合建议总结"
+  }
+}
+单张图片分析时 items 必须只有 1 项。hazard_level 只能填写“一般隐患”或“重大隐患”。
+basis 和 reference_standards 不允许只写法规名称，必须写成“《名称》（编号）第X条/第X.X.X条：条款内容”的正式报告表述。
+优先引用与图片隐患直接相关的现行法律、行政法规、部门规章、国家标准、行业标准或地方标准；不能确定条文时必须写“需人工复核具体条款”，不要编造不存在的条款。`
     }
 
     const userContent = []
@@ -135,7 +213,7 @@ const aiService = {
         })
       } else if (C.ALLOWED_IMAGE_TYPES.test(filePath)) {
         const base64Image = fs.readFileSync(filePath, { encoding: 'base64' })
-        userContent.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } })
+        userContent.push({ type: 'image_url', image_url: { url: `data:${inferImageMime(filePath)};base64,${base64Image}` } })
         userContent.push({ type: 'text', text: actualPrompt || '请描述这张图片的内容' })
       } else {
         userContent.push({ type: 'text', text: actualPrompt })
@@ -144,7 +222,7 @@ const aiService = {
       userContent.push({ type: 'text', text: actualPrompt })
     }
 
-    const { messages } = await buildMessages(actualSessionId)
+    const { messages, sessionId: resolvedSessionId } = await buildMessages(actualSessionId, userId)
     messages.push({ role: 'user', content: userContent })
 
     // 多模型：按 modelId 或激活模型创建客户端
@@ -160,9 +238,9 @@ const aiService = {
         max_tokens: C.AI_DEFAULT_MAX_TOKENS,
         temperature: C.AI_DEFAULT_TEMPERATURE,
       })
-      const result = response.choices[0].message.content
+      const result = normalizeAIResultContent(response.choices[0].message.content, isInspection)
       console.log(`[AIService] Response received, length: ${result?.length}`)
-      return { result, sessionId: actualSessionId || Date.now().toString() }
+      return { result, sessionId: resolvedSessionId }
     } catch (apiError) {
       console.error('[AIService] API error:', apiError)
       throw new Error(`AI 服务暂时不可用: ${apiError.message}`)
@@ -209,7 +287,7 @@ const aiService = {
       : '企业信息：未提供'
 
     const imageMetaText = images.length
-      ? images.map((img, idx) => `#${idx + 1} image_id=${img.id} 名称=${img.originalName || ''} 标签=${img.label || ''}`.trim()).join('\n')
+      ? images.map((img, idx) => `图片${idx + 1}：image_id=${idx + 1} 名称=${img.originalName || ''} 标签=${img.label || ''}`.trim()).join('\n')
       : '无图片'
 
     const analysisInstruction = `${prompt || '请对这些隐患照片进行一次性智能隐患分析'}
@@ -227,11 +305,19 @@ ${imageMetaText}
       "image_id": 1,
       "hazard_description": "现场隐患的具体描述",
       "hazard_level": "一般隐患或重大隐患",
+      "basis": "排查依据，格式必须为《法规或标准名称》（标准编号，如有）第X条/第X.X.X条：具体条款内容",
       "suggestion": "整改建议（含所依据法规条款，格式：建议内容。（依据：《XX法》第X条/《GB XXXX-XXXX》第X.X节））",
       "responsibility": "责任归属单位/部门名称"
     }
   ],
-  "reference_standards": ["本次排查实际引用的法规/标准全称列表"],
+  "reference_standards": [
+    {
+      "name": "法规或标准名称，不要带书名号",
+      "code": "标准编号或文件号，如 GB 2894-2008；法律法规可为空",
+      "clause": "条款号，如 第三十六条 或 4.5.2",
+      "content": "与对应图片隐患直接相关、可写入正式报告的条款内容"
+    }
+  ],
   "comprehensive_opinion": {
     "improvement_directions": [
       { "title": "改进方向标题", "content": "具体分析和建议内容（200-400字）" }
@@ -241,11 +327,13 @@ ${imageMetaText}
 }
 
 严格要求：
-1) items 数量必须等于图片数量，顺序必须与图片清单一致
+1) items 数量必须等于图片数量，顺序必须与图片清单一致，image_id 必须填写图片清单中的顺序号 1、2、3，不要填写文件名或数据库 ID
 2) hazard_level 由你根据隐患严重程度自主判断，只能填"一般隐患"或"重大隐患"
 3) suggestion 必须是具体的、可操作的整改措施，并在此处引用所依据的具体法规条款
 4) responsibility 填写隐患问题对应的责任单位/部门
-5) reference_standards 列出本次分析实际引用的全部法规/标准，不要编造不存在的法规
+5) basis 与 reference_standards 必须对应图片隐患，写明规范名称、标准编号/文件号、条款号、具体条款内容；不要只写法规名称，不要沿用模板固定清单，不要编造不存在的法规或条款
+   - basis 示例：《安全标志及其使用导则》（GB 2894-2008）第4.5.2条：安全标志应设置在与安全有关的醒目位置，便于人员观察。
+   - reference_standards 必须使用对象数组，字段为 name、code、clause、content，便于报告生成时排成“1. 《名称》（编号）第X条：条款内容；”
 6) comprehensive_opinion 必须结合本次发现的全部隐患来写，不要套用空泛模板
    - improvement_directions 给出 2-4 个安全管理改进方向，每个含标题和详细内容
    - general_suggestions 给出综合建议总结
@@ -266,7 +354,7 @@ ${imageMetaText}
         max_tokens: C.AI_DEFAULT_MAX_TOKENS,
         temperature: C.AI_INSPECTION_TEMPERATURE,
       })
-      const result = response.choices[0].message.content
+      const result = normalizeAIResultContent(response.choices[0].message.content, true)
       console.log('[AIService] Hazard inspection response received.')
       return { result, sessionId }
     } catch (apiError) {

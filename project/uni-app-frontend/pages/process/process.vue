@@ -526,6 +526,7 @@ const pickHazardImages = () => {
 const uploadHazardImages = async (filePaths) => {
   hazardUploading.value = true
   uni.showLoading({ title: '上传中...' })
+  const uploadedIds = []
 
   try {
     for (const fp of filePaths) {
@@ -542,7 +543,15 @@ const uploadHazardImages = async (filePaths) => {
             } catch (e) {
               data = null
             }
-            resolve(!!(res.statusCode >= 200 && res.statusCode < 300 && data && data.success))
+            if (res.statusCode >= 200 && res.statusCode < 300 && data && data.success) {
+              const created = Array.isArray(data.data) ? data.data : []
+              created.forEach((item) => {
+                if (item?.id) uploadedIds.push(Number(item.id))
+              })
+              resolve(true)
+            } else {
+              resolve(false)
+            }
           },
           fail: () => resolve(false)
         })
@@ -559,6 +568,8 @@ const uploadHazardImages = async (filePaths) => {
     uni.hideLoading()
     hazardUploading.value = false
   }
+
+  return uploadedIds
 }
 
 /**
@@ -850,7 +861,8 @@ const handleSend = () => {
     data: {
       user_id: user.value.id,
       prompt: currentPrompt,
-      session_id: currentSessionId.value
+      session_id: currentSessionId.value,
+      model_id: selectedModelId.value || '',
     },
     success: (res) => handleResponse(res.data),
     fail: () => handleError(),
@@ -882,7 +894,7 @@ const handleResponse = (data) => {
     fetchSessions()
     scrollToBottom()
   } else {
-    uni.showToast({ title: data.message || '处理失败', icon: 'none' })
+    uni.showToast({ title: data.msg || data.message || '处理失败', icon: 'none' })
   }
 }
 
@@ -928,9 +940,19 @@ const scrollToBottom = () => {
 
 const handlePickImage = () => {
   uni.chooseImage({
-    count: 1,
-    success: (res) => {
-      imagePath.value = res.tempFilePaths[0]
+    count: 9,
+    success: async (res) => {
+      const files = res.tempFilePaths || []
+      if (!files.length) return
+      hazardFailedPaths.value = []
+      const uploadedIds = await uploadHazardImages(files)
+      if (uploadedIds.length) {
+        selectedHazardIds.value = Array.from(new Set([
+          ...selectedHazardIds.value,
+          ...uploadedIds,
+        ]))
+        imagePath.value = ''
+      }
     }
   })
 }

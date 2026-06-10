@@ -1,421 +1,1058 @@
-/**
- * 文档生成模块
- * 负责 Word/PDF 报告生成，严格匹配《企业安全生产隐患排查报告》模板格式
- *
- * @created 2026-04-12
- * @updated 2026-05-18 — 模板化报告生成
- */
 const {
-  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  ImageRun, HeadingLevel, AlignmentType, BorderStyle, WidthType,
-  ShadingType, PageBreak,
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  ImageRun,
+  HeadingLevel,
+  AlignmentType,
+  BorderStyle,
+  WidthType,
+  ShadingType,
+  PageBreak,
 } = require('docx')
 const PDFDocument = require('pdfkit')
 const fs = require('fs')
 const path = require('path')
-
-// ---------------------------------------------------------------------------
-// 常量
-// ---------------------------------------------------------------------------
-
-const A4_WIDTH = 11906
-const CONTENT_WIDTH = 9360
+const { spawnSync } = require('child_process')
 
 const FONT = 'SimHei'
+const A4_WIDTH = 11906
 const BORDER = { style: BorderStyle.SINGLE, size: 1, color: '999999' }
 const BORDERS = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER }
-const CELL_MARGINS = { top: 60, bottom: 60, left: 100, right: 100 }
+const CELL_MARGINS = { top: 80, bottom: 80, left: 120, right: 120 }
 
-// ---------------------------------------------------------------------------
-// 固定文本
-// ---------------------------------------------------------------------------
-
-const 保密声明条款 = [
+const DEFAULT_REPORT_TITLE = '安全生产隐患排查报告'
+const DEFAULT_HAZARD_LEVEL = '一般隐患'
+const DEFAULT_RESPONSIBILITY = '企业安全管理部门'
+const CONFIDENTIALITY_CLAUSES = [
   '双方保证该保密信息仅用于与合作有关的用途或目的。',
   '双方各自保证对对方所提供的保密信息按本协议约定予以保密，并采取适用于对自己的保密信息同样的保护措施和审慎程度进行保密。',
   '严格执行国家有关法律、法规和有关安全生产文件及标准，采用资料核对和现场查证发现的客观事实为安全生产技术咨询服务的依据，对所检查场所及设施的准确性负责，严格做到客观公正、严谨务实、清廉自律。',
-  '任何一方在提供保密信息时，如以书面形式提供，应注明"保密"等相关字样；如以口头或可视形式透露，应在透露前告知接受方为保密信息，并在告知后5日内以书面形式确认，该确认应包含有所透露的信息为保密信息的内容。',
-  '双方保证保密信息仅可在各自一方从事该项目研究的负责人和雇员范围内知悉。在双方上述人员知悉该保密信息前，应向其提示保密信息的保密性和应承担的义务，并保证上述人员以书面形式同意接受本协议条款的约束。',
-  '经保密信息披露方提出要求，接受方应按照保密信息披露方的指示将含有保密信息的所有文件或其他资料归还给保密信息的披露方，或者按照保密信息披露方的指示予以销毁。项目终止后，保密信息披露方有权向接受方提出书面要求将保密信息资料交还。',
-  '接受方应法院或其它法律、行政管理部门要求披露的信息（通过口头提问、询问、要求资料或文件、传唤、民事或刑事调查或其他程序）因而透露保密信息，在该种情况发生时，接受方应立即向披露方发出通知，并作出必要声明。',
-  '保密信息披露方提供的保密信息，如涉及侵权第三方，接受方不对此侵权负责，且免于由此带来的索赔。',
-  '任何一方未履行本协议所列条款，均为违约，违约方应承担自己的违约行为所造成的损失。',
-  '因不可抗拒力产生的相关责任，双方互不承担此期间违约责任，当不可抗拒力解除后，双方应再次共同承担履行各自责任。',
-  '此协议一经双方确认签订，任何一方不得变更或修改本协议，国家法律法规规定的除外。',
-  '本协议产生的任何争议，双方应先协商解决，若协商不成，任何一方可向所在地人民法院诉讼。',
+  '任何一方在提供保密信息时，如以书面形式提供，应注明“保密”等相关字样；如以口头或可视形式透露，应在透露前告知接受方为保密信息，并在告知后5日内以书面形式确认。',
+  '双方保证保密信息仅可在各自一方从事该项目研究的负责人和雇员范围内知悉，并向相关人员提示保密义务。',
+  '项目终止后，保密信息披露方有权向接受方提出书面要求将保密信息资料交还或按要求销毁。',
+]
+const SERVICE_COMMITMENTS = [
+  '以法律法规为依据，以国家行业主管部门基本规范与行业标准为指南，确保安全生产社会化咨询工作质量，坚持独立、客观、科学、公正的原则。',
+  '按规定的标准和程序实施安全生产社会化咨询服务，确保咨询服务的有效性和科学性。',
+  '遵守保密规定，未经受审核方授权不向第三方透露相关技术、经济方面的机密。',
+  '在明确项目性质、服务范围和职责后，充分沟通并做好安全生产社会化服务工作。',
+  '根据企业要求合理安排咨询服务资源，及时解决服务过程中发现的问题。',
+  '坚持诚信、力求发展、客户满意、社会满意的服务宗旨，持续改进服务质量。',
 ]
 
-const 服务承诺条款 = [
-  '以法律法规为依据，以国家行业主管部门基本规范与行业标准为指南，确保安全生产社会化咨询工作质量，坚持独立、客观、科学、公正的原则，为贵单位提供优质服务，树立良好的声誉并持续改进。',
-  '按规定的标准和程序实施安全生产社会化咨询服务，确保咨询服务的有效性和科学性，并具备实施安全生产社会化咨询服务的相适应的高素质的师资专家队伍、技术资源、财务资源及办公条件。',
-  '遵守保密规定，未经受审核方的授权决不向第三方透露贵公司的技术、经济方面的机密。',
-  '在明确项目的性质，确认安全生产服务的覆盖（适用）的范围和职责后，双方再加以充分沟通，深度研究后做好安全生产社会化服务工作。',
-  '我公司可根据企业要求通过增加人力资源等方式，确保咨询工作在企业安排规定的时间内完成，但为保证安全生产社会化服务运行的有效性和实用性并及时解决安全生产服务过程运行中所发现的问题，我公司将定时、定点、定期为贵单位提供咨询服务。',
-  '所有资金、物资等以合同约定财务账户为准。',
-  '坚持诚信、力求发展、客户满意、社会满意是我们的宗旨，选择佰森安全没有遗憾。安全之路任重道远，佰森伴您一路同行。',
-]
+const normalizeText = (value) => String(value || '').replace(/\r/g, '').trim()
 
-
-// ---------------------------------------------------------------------------
-// 辅助函数
-// ---------------------------------------------------------------------------
-
-const p = (text, opts = {}) => {
-  const runs = []
-  if (typeof text === 'string') {
-    runs.push(new TextRun({ text, size: opts.size || 24, font: opts.font || FONT, bold: !!opts.bold }))
-  } else if (Array.isArray(text)) {
-    text.forEach((t) => runs.push(t instanceof TextRun ? t : new TextRun({ text: t, size: 24, font: FONT })))
+const normalizeReferenceValue = (value) => {
+  if (!value) return ''
+  if (typeof value === 'object') {
+    const name = normalizeText(value.name || value.title || value.standard_name)
+    const code = normalizeText(value.code || value.standard_code || value.number)
+    const clause = normalizeText(value.clause || value.article || value.item)
+    const content = normalizeText(value.content || value.clause_content || value.text)
+    if (!name && !code && !clause && !content) return ''
+    const title = name
+      ? (name.startsWith('《') ? name : `《${name}》`)
+      : ''
+    const codeText = code && title && !title.includes(code) ? `（${code}）` : (code && !title ? `（${code}）` : '')
+    const clauseText = clause
+      ? (/^第.+[条款项节]$/.test(clause) || /^[\d.]+$/.test(clause) === false ? clause : `第${clause}条`)
+      : ''
+    const prefix = `${title}${codeText}${clauseText}`
+    return content ? `${prefix}：${content}` : prefix
   }
-  return new Paragraph({
-    children: runs,
-    alignment: opts.alignment,
-    spacing: opts.spacing || { after: 120 },
-    heading: opts.heading,
-    ...(opts.extra || {}),
-  })
+  return normalizeText(value)
 }
 
-const heading1 = (text) => p(text, { size: 32, bold: true, spacing: { before: 300, after: 200 }, heading: HeadingLevel.HEADING_1 })
-const heading2 = (text) => p(text, { size: 28, bold: true, spacing: { before: 200, after: 150 }, heading: HeadingLevel.HEADING_2 })
+const normalizeReferenceCode = (value) => normalizeText(value)
+  .replace(/\bGB\s*\/\s*T\s*[- ]?\s*/i, 'GB/T ')
+  .replace(/\bDB(\d+)\s*\/\s*T\s*[- ]?\s*/i, (_, number) => `DB${number}/T `)
+  .replace(/\b(JGJ|AQ|TSG|XF|GA|JG|CJ|SY|GB)\s*-\s*/i, (_, prefix) => `${prefix.toUpperCase()} `)
+  .replace(/\s+/g, ' ')
+  .toUpperCase()
+  .trim()
 
-const makeTable = (headers, rows, colWidths) => {
-  const totalWidth = colWidths.reduce((a, b) => a + b, 0)
-  const headerRow = new TableRow({
-    tableHeader: true,
-    children: headers.map((h, i) => new TableCell({
-      borders: BORDERS,
-      width: { size: colWidths[i], type: WidthType.DXA },
-      shading: { fill: 'D5E8F0', type: ShadingType.CLEAR },
-      margins: CELL_MARGINS,
-      children: [p(h, { size: 20, bold: true, alignment: AlignmentType.CENTER })],
-    })),
-  })
-  const dataRows = rows.map((row) => new TableRow({
-    children: row.map((cell, i) => new TableCell({
-      borders: BORDERS,
-      width: { size: colWidths[i], type: WidthType.DXA },
-      margins: CELL_MARGINS,
-      children: Array.isArray(cell) ? cell : [p(String(cell || ''), { size: 20 })],
-    })),
-  }))
-  return new Table({ width: { size: totalWidth, type: WidthType.DXA }, columnWidths: colWidths, rows: [headerRow, ...dataRows] })
+const referenceIdentity = (value) => {
+  const text = normalizeReferenceValue(value)
+  const title = text.match(/《([^》]+)》/)?.[1] || ''
+  const code = normalizeReferenceCode(
+    text.match(/\b(?:GB\/T|GB|JGJ|AQ|DB\d+\/T|TSG|XF|GA|JG|CJ|SY)[\s-]*[A-Z0-9./-]+-\d{4}\b/i)?.[0]
+  )
+  const clause = text.match(/第[一二三四五六七八九十百千万零〇两\d.]+[条款项节]/)?.[0] || ''
+  if (code && clause) return `${code}|${clause}`
+  if (title || clause) return `${title}|${clause}`
+  return text.replace(/[《》（）()；;。：:\s]/g, '').slice(0, 80)
 }
 
-/** 解析 AI 结果，提取 items / reference_standards / comprehensive_opinion */
-const parseResult = (resultText) => {
-  try {
-    let text = resultText.trim()
-    if (text.startsWith('```json')) text = text.substring(7)
-    else if (text.startsWith('```')) text = text.substring(3)
-    if (text.endsWith('```')) text = text.substring(0, text.length - 3)
-    const data = JSON.parse(text)
-    if (data && typeof data === 'object' && (data.hazard_description || Array.isArray(data.items))) {
-      return {
-        items: Array.isArray(data.items) ? data.items : (data.hazard_description ? [data] : []),
-        referenceStandards: Array.isArray(data.reference_standards) ? data.reference_standards : [],
-        comprehensiveOpinion: data.comprehensive_opinion || null,
+const mergeReferenceStandards = (primary, secondary) => {
+  const seen = new Set()
+  const result = []
+  ;[primary, secondary].forEach((group) => {
+    group.forEach((item) => {
+      const text = normalizeReferenceValue(item)
+      const key = referenceIdentity(text)
+      if (!text || seen.has(key)) return
+      seen.add(key)
+      result.push(text)
+    })
+  })
+  return result
+}
+
+const toImageList = (imagePath) => {
+  if (Array.isArray(imagePath)) return imagePath.filter(Boolean)
+  return imagePath ? [imagePath] : []
+}
+
+const stripMarkdown = (text) => normalizeText(text)
+  .replace(/^```[a-zA-Z]*\n?/gm, '')
+  .replace(/```$/gm, '')
+  .replace(/^#{1,6}\s*/gm, '')
+  .replace(/^\s*[-*+]\s+/gm, '')
+  .replace(/^\s*\d+[.)]\s+/gm, '')
+  .replace(/\*\*(.*?)\*\*/g, '$1')
+  .replace(/\*(.*?)\*/g, '$1')
+  .replace(/`([^`]+)`/g, '$1')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const findSectionMatches = (text, sections) => {
+  const matches = []
+  for (const section of sections) {
+    let best = null
+    for (const label of section.labels) {
+      const regex = new RegExp(
+        `(^|\\n)\\s*(?:[#>*\\-\\d一二三四五六七八九十、.()（）\\s]*)${escapeRegExp(label)}\\s*[:：]?\\s*`,
+        'im'
+      )
+      const match = regex.exec(text)
+      if (match && (!best || match.index < best.index)) {
+        best = { index: match.index, end: match.index + match[0].length, label }
       }
     }
-  } catch (e) { /* 忽略 */ }
-  return { items: [], referenceStandards: [], comprehensiveOpinion: null }
+    if (best) matches.push({ key: section.key, ...best })
+  }
+  return matches.sort((a, b) => a.index - b.index)
 }
 
-/**
- * 格式化日期为中文格式
- * @param {Date} d
- * @returns {string} 例：二〇二六年五月十八日
- */
-const formatDateCN = (d) => {
-  const cn = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
-  const y = String(d.getFullYear())
-  const year = y.split('').map((c) => cn[Number(c)]).join('')
-  const month = d.getMonth() + 1
-  const day = d.getDate()
-  const mStr = month <= 10 ? (month === 10 ? '十' : cn[month]) : '十一' + (month === 12 ? '二' : '')
-  const dStr = day <= 10 ? (day === 10 ? '十' : cn[day]) : (day < 20 ? '十' + cn[day - 10] : cn[Math.floor(day / 10)] + '十' + (day % 10 ? cn[day % 10] : ''))
-  return `${year}年${mStr}月${dStr}日`
+const extractSections = (text, sections) => {
+  const matches = findSectionMatches(text, sections)
+  const result = {}
+  for (let i = 0; i < matches.length; i += 1) {
+    const current = matches[i]
+    const next = matches[i + 1]
+    const body = text.slice(current.end, next ? next.index : text.length).trim()
+    result[current.key] = stripMarkdown(body)
+  }
+  return result
 }
 
-// ===========================================================================
-// 导出
-// ===========================================================================
+const dedupe = (list) => {
+  const seen = new Set()
+  return list.filter((item) => {
+    const key = normalizeReferenceValue(item) || normalizeText(item)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+const extractReferenceStandards = (...sources) => {
+  const quoted = []
+  const flat = sources.flat().map(normalizeReferenceValue).filter(Boolean)
+  flat.forEach((text) => {
+    const matches = text.match(/《[^》]{2,60}》/g)
+    if (matches) quoted.push(...matches)
+  })
+  if (quoted.length) return dedupe(quoted)
+
+  const split = []
+  flat.forEach((text) => {
+    text
+      .split(/\n|；|;|。/)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 4)
+      .forEach((item) => split.push(item))
+  })
+  return dedupe(split).slice(0, 6)
+}
+
+const normalizeItem = (item, index, enterprise) => ({
+  image_id: Number(item.image_id) || index + 1,
+  hazard_description: normalizeText(item.hazard_description || item.description || item.issue),
+  hazard_level: normalizeText(item.hazard_level || item.level) || DEFAULT_HAZARD_LEVEL,
+  basis: normalizeText(item.basis || item.reference || item.standard),
+  suggestion: normalizeText(item.suggestion || item.measure || item.action),
+  responsibility: normalizeText(item.responsibility || item.owner) || DEFAULT_RESPONSIBILITY,
+  enterprise_name: normalizeText(item.enterprise_name || enterprise.name),
+  location: normalizeText(item.location || enterprise.project_name || enterprise.region || enterprise.address),
+})
+
+const parseImprovementDirections = (text) => {
+  const lines = stripMarkdown(text)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!lines.length) return []
+
+  return lines.slice(0, 4).map((line, index) => {
+    const parts = line.split(/[:：]/)
+    if (parts.length > 1) {
+      const title = normalizeText(parts.shift())
+      const content = normalizeText(parts.join('：'))
+      return { title: title || `改进方向 ${index + 1}`, content: content || line }
+    }
+    return { title: `改进方向 ${index + 1}`, content: line }
+  })
+}
+
+const buildFallbackOpinion = (items) => {
+  const summary = items
+    .map((item, index) => `${index + 1}. ${item.hazard_description || '现场隐患待复核'}`)
+    .slice(0, 3)
+    .join('\n')
+
+  return {
+    improvement_directions: [
+      {
+        title: '落实隐患整改闭环',
+        content: '建议针对本次排查发现的问题建立整改台账，明确整改责任人、整改措施和完成时限，并在整改完成后组织复查验收。',
+      },
+      {
+        title: '完善现场风险管控',
+        content: '建议结合现场作业特点补充警示标识、隔离防护和操作规程，持续完善作业许可、巡检频次和关键岗位提醒机制。',
+      },
+      {
+        title: '加强培训与常态化检查',
+        content: '建议组织相关岗位开展法规标准宣贯、岗位操作培训和案例复盘，将本次隐患纳入班组日常检查和月度考核。',
+      },
+    ],
+    general_suggestions: summary
+      ? `本次排查发现的问题应尽快形成整改闭环。建议企业结合以下重点问题持续跟踪：\n${summary}\n并同步完善制度、培训和复查机制，防止同类问题重复发生。`
+      : '建议企业结合本次排查结果，完善风险分级管控和隐患排查治理机制，明确整改责任、整改时限和复查要求，持续提升现场安全管理水平。',
+  }
+}
+
+const parseResult = (resultText, enterprise) => {
+  const cleaned = normalizeText(resultText)
+  if (!cleaned) {
+    return {
+      items: [],
+      referenceStandards: [],
+      comprehensiveOpinion: null,
+      rawText: '',
+      isStructured: false,
+    }
+  }
+
+  let normalized = cleaned
+  if (normalized.startsWith('```json')) normalized = normalized.slice(7)
+  else if (normalized.startsWith('```')) normalized = normalized.slice(3)
+  if (normalized.endsWith('```')) normalized = normalized.slice(0, -3)
+  normalized = normalized.trim()
+
+  try {
+    const data = JSON.parse(normalized)
+    const items = Array.isArray(data?.items)
+      ? data.items.map((item, index) => normalizeItem(item, index, enterprise))
+      : (data && typeof data === 'object' && (
+        data.hazard_description || data.basis || data.suggestion || data.hazard_level || data.responsibility
+      ))
+        ? [normalizeItem(data, 0, enterprise)]
+        : []
+
+    const opinion = data?.comprehensive_opinion
+      ? {
+          improvement_directions: Array.isArray(data.comprehensive_opinion.improvement_directions)
+            ? data.comprehensive_opinion.improvement_directions
+                .map((item, index) => ({
+                  title: normalizeText(item.title) || `改进方向 ${index + 1}`,
+                  content: normalizeText(item.content),
+                }))
+                .filter((item) => item.content)
+            : [],
+          general_suggestions: normalizeText(data.comprehensive_opinion.general_suggestions),
+        }
+      : null
+
+    return {
+      items,
+      referenceStandards: dedupe(
+        (Array.isArray(data?.reference_standards) ? data.reference_standards : [])
+          .map((item) => normalizeReferenceValue(item))
+          .filter(Boolean)
+      ),
+      comprehensiveOpinion: opinion,
+      rawText: '',
+      isStructured: items.length > 0,
+    }
+  } catch (error) {
+    const sectionData = extractSections(normalized, [
+      { key: 'hazard_description', labels: ['隐患描述', '问题描述', '隐患情况', '分析结果'] },
+      { key: 'basis', labels: ['排查依据', '依据', '法规依据', '标准依据'] },
+      { key: 'suggestion', labels: ['整改建议', '整改措施', '处理建议', '建议'] },
+      { key: 'hazard_level', labels: ['隐患等级', '风险等级'] },
+      { key: 'responsibility', labels: ['责任划分', '责任部门', '责任单位', '责任人'] },
+      { key: 'general_suggestions', labels: ['综合意见', '综合建议', '总体建议'] },
+      { key: 'improvement_directions', labels: ['改进方向', '改进建议'] },
+    ])
+
+    const hasInspectionSections = ['hazard_description', 'basis', 'suggestion'].some((key) => normalizeText(sectionData[key]))
+
+    const items = hasInspectionSections
+      ? [normalizeItem({
+          hazard_description: sectionData.hazard_description,
+          basis: sectionData.basis,
+          suggestion: sectionData.suggestion,
+          hazard_level: sectionData.hazard_level,
+          responsibility: sectionData.responsibility,
+        }, 0, enterprise)]
+      : []
+
+    const opinion = sectionData.general_suggestions || sectionData.improvement_directions
+      ? {
+          improvement_directions: parseImprovementDirections(sectionData.improvement_directions),
+          general_suggestions: normalizeText(sectionData.general_suggestions),
+        }
+      : null
+
+    return {
+      items,
+      referenceStandards: extractReferenceStandards(sectionData.basis, normalized),
+      comprehensiveOpinion: opinion,
+      rawText: stripMarkdown(normalized),
+      isStructured: items.length > 0,
+    }
+  }
+}
+
+const normalizeEnterprise = (enterprise = {}) => ({
+  id: enterprise.id || null,
+  name: normalizeText(enterprise.name) || '待补充企业名称',
+  project_name: normalizeText(enterprise.project_name),
+  region: normalizeText(enterprise.region) || '待补充',
+  address: normalizeText(enterprise.address) || '待补充',
+  contact: normalizeText(enterprise.contact) || '待补充',
+  phone: normalizeText(enterprise.phone) || '待补充',
+  industry: normalizeText(enterprise.industry) || '待补充',
+  enterprise_type: normalizeText(enterprise.enterprise_type) || '待补充',
+  scale: normalizeText(enterprise.scale) || '待补充',
+  inspector_name: normalizeText(enterprise.inspector_name) || '待补充',
+  inspection_date: normalizeText(enterprise.inspection_date),
+})
+
+const buildReportData = ({ prompt, result, imagePaths = [], enterprise }) => {
+  const normalizedEnterprise = normalizeEnterprise(enterprise)
+  const parsed = parseResult(result, normalizedEnterprise)
+  const items = parsed.items.length
+    ? parsed.items
+    : [normalizeItem({
+        hazard_description: parsed.rawText || normalizeText(prompt) || '本次分析未返回结构化隐患内容，请结合原始结果进一步复核。',
+        basis: parsed.referenceStandards[0] || '',
+        suggestion: '建议结合现场情况进一步核实隐患详情，补充法规依据、整改措施和责任划分后再行归档。',
+        hazard_level: DEFAULT_HAZARD_LEVEL,
+        responsibility: DEFAULT_RESPONSIBILITY,
+      }, 0, normalizedEnterprise)]
+
+  const finalStandards = mergeReferenceStandards(
+    parsed.referenceStandards,
+    items.map((item) => item.basis)
+  )
+
+  const opinion = (
+    parsed.comprehensiveOpinion
+    && (
+      (parsed.comprehensiveOpinion.improvement_directions || []).length
+      || parsed.comprehensiveOpinion.general_suggestions
+    )
+  )
+    ? {
+        improvement_directions: (parsed.comprehensiveOpinion.improvement_directions || []).filter((item) => normalizeText(item.content)),
+        general_suggestions: normalizeText(parsed.comprehensiveOpinion.general_suggestions),
+      }
+    : buildFallbackOpinion(items)
+
+  return {
+    prompt: normalizeText(prompt) || '无',
+    enterprise: normalizedEnterprise,
+    items,
+    referenceStandards: finalStandards,
+    comprehensiveOpinion: opinion,
+    rawText: parsed.isStructured ? '' : parsed.rawText,
+    imagePaths: toImageList(imagePaths),
+  }
+}
+
+const formatDateCN = (value) => {
+  if (!value) {
+    const now = new Date()
+    return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
+  }
+  const parsed = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return normalizeText(value)
+  return `${parsed.getFullYear()}年${parsed.getMonth() + 1}月${parsed.getDate()}日`
+}
+
+const paragraph = (text, options = {}) => new Paragraph({
+  children: [
+    new TextRun({
+      text: String(text || ''),
+      font: FONT,
+      size: options.size || 24,
+      bold: !!options.bold,
+    }),
+  ],
+  alignment: options.alignment,
+  spacing: options.spacing || { after: 120 },
+  heading: options.heading,
+})
+
+const sectionHeading = (text, level = 1) => paragraph(text, {
+  size: level === 1 ? 30 : 26,
+  bold: true,
+  heading: level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
+  spacing: level === 1 ? { before: 220, after: 160 } : { before: 180, after: 120 },
+})
+
+const valueTable = (rows, widths = [2200, 7160]) => new Table({
+  width: { size: widths[0] + widths[1], type: WidthType.DXA },
+  columnWidths: widths,
+  rows: rows.map(([label, value], index) => new TableRow({
+    children: [
+      new TableCell({
+        borders: BORDERS,
+        width: { size: widths[0], type: WidthType.DXA },
+        shading: index === 0 ? { fill: 'F5F7FA', type: ShadingType.CLEAR } : undefined,
+        margins: CELL_MARGINS,
+        children: [paragraph(label, { bold: true, size: 22 })],
+      }),
+      new TableCell({
+        borders: BORDERS,
+        width: { size: widths[1], type: WidthType.DXA },
+        margins: CELL_MARGINS,
+        children: [paragraph(value, { size: 22 })],
+      }),
+    ],
+  })),
+})
+
+const inferDocxImageType = (filePath) => {
+  const ext = path.extname(String(filePath || '')).toLowerCase()
+  if (ext === '.png') return 'png'
+  if (ext === '.gif') return 'gif'
+  if (ext === '.bmp') return 'bmp'
+  return 'jpeg'
+}
+
+const makeImageParagraph = (filePath, width = 420, height = 300) => {
+  if (!filePath || !fs.existsSync(filePath)) return null
+  try {
+    return new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 120 },
+      children: [
+        new ImageRun({
+          type: inferDocxImageType(filePath),
+          data: fs.readFileSync(filePath),
+          transformation: { width, height },
+          altText: { title: '隐患图片', description: '', name: path.basename(filePath) },
+        }),
+      ],
+    })
+  } catch (error) {
+    return null
+  }
+}
+
+const writeWordReportFromTemplate = async ({ reportData, compilerUnit, auditorName }) => {
+  const templatePath = path.join(__dirname, '..', 'templates', 'hazard_report_template.docx')
+  const scriptPath = path.join(__dirname, '..', 'tools', 'fillReportTemplate.py')
+  if (!fs.existsSync(templatePath) || !fs.existsSync(scriptPath)) return null
+
+  const fileName = `report_${Date.now()}.docx`
+  const wordPath = path.join('uploads', fileName)
+  const fullPath = path.join(__dirname, '..', wordPath)
+  const payloadPath = path.join(__dirname, '..', 'uploads', `report_payload_${Date.now()}.json`)
+
+  const payload = {
+    enterprise: reportData.enterprise,
+    prompt: reportData.prompt,
+    items: reportData.items,
+    referenceStandards: reportData.referenceStandards,
+    comprehensiveOpinion: reportData.comprehensiveOpinion,
+    imagePaths: reportData.imagePaths,
+    compilerUnit,
+    auditorName,
+    inspectionDate: formatDateCN(reportData.enterprise.inspection_date),
+  }
+
+  try {
+    fs.writeFileSync(payloadPath, JSON.stringify(payload, null, 2), 'utf8')
+    const result = spawnSync('py', [scriptPath, templatePath, fullPath, payloadPath], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 60000,
+    })
+    if (result.status === 0 && fs.existsSync(fullPath)) {
+      return wordPath.replace(/\\/g, '/')
+    }
+    console.error('[docService] template report generation failed:', result.stderr || result.stdout)
+    return null
+  } catch (error) {
+    console.error('[docService] template report generation error:', error)
+    return null
+  } finally {
+    try { if (fs.existsSync(payloadPath)) fs.unlinkSync(payloadPath) } catch (error) { /* ignore */ }
+  }
+}
+
+const getItemImagePath = (item, index, imagePaths) => {
+  const imageIndex = Number(item.image_id) - 1
+  if (imageIndex >= 0 && imageIndex < imagePaths.length) return imagePaths[imageIndex]
+  return imagePaths[index] || null
+}
+
+const tableCell = (children, width, options = {}) => new TableCell({
+  borders: BORDERS,
+  width: { size: width, type: WidthType.DXA },
+  margins: CELL_MARGINS,
+  shading: options.shading,
+  children: children.length ? children : [paragraph('', { size: 20 })],
+})
+
+const textCell = (text, width, options = {}) => tableCell([
+  paragraph(text, {
+    size: options.size || 20,
+    bold: !!options.bold,
+    alignment: options.alignment,
+    spacing: { after: 60 },
+  }),
+], width, options)
+
+const buildHazardEvidenceChildren = (item, imagePath) => {
+  const children = [
+    paragraph(item.hazard_description || '待补充', { size: 20, spacing: { after: 80 } }),
+  ]
+  const imageParagraph = makeImageParagraph(imagePath, 220, 165)
+  if (imageParagraph) children.push(imageParagraph)
+  return children
+}
+
+const buildHazardChecklistTable = ({ enterprise, items, imagePaths, referenceStandards }) => {
+  const widths = [1050, 1050, 3300, 800, 2300, 860]
+  const headers = ['企业', '地点', '现场存在问题（隐患描述及图片）', '隐患\n等级', '整改建议', '责任\n划分']
+  const rows = [
+    new TableRow({
+      tableHeader: true,
+      children: headers.map((header, index) => textCell(header, widths[index], {
+        bold: true,
+        alignment: AlignmentType.CENTER,
+        shading: { fill: 'D9EAF7', type: ShadingType.CLEAR },
+      })),
+    }),
+  ]
+
+  items.forEach((item, index) => {
+    const imagePath = getItemImagePath(item, index, imagePaths)
+    rows.push(new TableRow({
+      children: [
+        textCell(item.enterprise_name || enterprise.name, widths[0], { size: 19 }),
+        textCell(item.location || enterprise.project_name || enterprise.region || '现场', widths[1], { size: 19 }),
+        tableCell(buildHazardEvidenceChildren(item, imagePath), widths[2]),
+        textCell(item.hazard_level || DEFAULT_HAZARD_LEVEL, widths[3], {
+          size: 19,
+          alignment: AlignmentType.CENTER,
+        }),
+        textCell(item.suggestion || '建议结合现场情况补充具体整改措施。', widths[4], { size: 19 }),
+        textCell(item.responsibility || DEFAULT_RESPONSIBILITY, widths[5], { size: 19 }),
+      ],
+    }))
+  })
+
+  if (!items.length) {
+    rows.push(new TableRow({
+      children: [
+        textCell(enterprise.name, widths[0], { size: 19 }),
+        textCell(enterprise.project_name || enterprise.region || '现场', widths[1], { size: 19 }),
+        textCell('暂无隐患排查项目。', widths[2], { size: 19 }),
+        textCell('-', widths[3], { size: 19, alignment: AlignmentType.CENTER }),
+        textCell('-', widths[4], { size: 19 }),
+        textCell('-', widths[5], { size: 19 }),
+      ],
+    }))
+  }
+
+  return new Table({
+    width: { size: widths.reduce((sum, value) => sum + value, 0), type: WidthType.DXA },
+    columnWidths: widths,
+    rows,
+  })
+}
+
+const buildWordChildren = ({ prompt, enterprise, items, referenceStandards, comprehensiveOpinion, rawText, imagePaths }) => {
+  const projectName = normalizeText(enterprise.project_name)
+  const titlePrefix = projectName ? `${enterprise.name} ${projectName}` : enterprise.name
+  const children = []
+
+  children.push(paragraph(enterprise.name, {
+    size: 32,
+    bold: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 120 },
+  }))
+  children.push(paragraph(projectName || '项目部', {
+    size: 30,
+    bold: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 360 },
+  }))
+  children.push(paragraph(DEFAULT_REPORT_TITLE, {
+    size: 36,
+    bold: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 900 },
+  }))
+  children.push(valueTable([
+    ['编制单位', 'XXXX安全技术咨询有限公司'],
+    ['编制人员', enterprise.inspector_name],
+    ['审核人员', '待补充'],
+    ['编制日期', formatDateCN(enterprise.inspection_date)],
+    ['联系电话', enterprise.phone],
+    ['电子邮箱', '待补充'],
+  ]))
+  children.push(new Paragraph({ children: [new PageBreak()] }))
+
+  children.push(sectionHeading('保密公正性声明'))
+  children.push(paragraph('为保证安全生产技术咨询服务工作的公正性与有效性，经双方协商，共同做以下承诺：'))
+  CONFIDENTIALITY_CLAUSES.forEach((clause, index) => {
+    children.push(paragraph(`${index + 1}. ${clause}`, { size: 22, spacing: { after: 80 } }))
+  })
+  children.push(paragraph('甲方：                              乙方：'))
+  children.push(paragraph('签字（盖章）：                      签字（盖章）：'))
+  children.push(paragraph('年   月   日                        年   月   日'))
+  children.push(new Paragraph({ children: [new PageBreak()] }))
+
+  children.push(sectionHeading('服 务 承 诺 书'))
+  children.push(paragraph('为确保咨询服务质量到位，最大限度地满足客户要求，并为客户提供增值服务，现做出以下郑重承诺：'))
+  SERVICE_COMMITMENTS.forEach((clause) => {
+    children.push(paragraph(`★  ${clause}`, { size: 22, spacing: { after: 80 } }))
+  })
+  children.push(new Paragraph({ children: [new PageBreak()] }))
+
+  children.push(sectionHeading('目  录'))
+  ;[
+    '一、隐患排查',
+    '　　（一）隐患排查形式',
+    '　　（二）检查依据',
+    '　　（三）现场问题隐患及整改建议措施清单',
+    '二、隐患排查综合意见',
+    '　　（一）安全管理改进方向及建议',
+    '　　（二）综合建议',
+  ].forEach((line) => children.push(paragraph(line, { size: 24, spacing: { after: 80 } })))
+  children.push(new Paragraph({ children: [new PageBreak()] }))
+
+  children.push(paragraph(enterprise.name, {
+    size: 30,
+    bold: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 80 },
+  }))
+  children.push(paragraph(projectName || '项目部', {
+    size: 28,
+    bold: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 80 },
+  }))
+  children.push(paragraph(DEFAULT_REPORT_TITLE, {
+    size: 32,
+    bold: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 240 },
+  }))
+
+  children.push(sectionHeading('一、隐患排查'))
+  children.push(sectionHeading('（一） 隐患排查形式', 2))
+  children.push(paragraph('现场工作场所及安全办公区域检查。'))
+  children.push(paragraph(`此次检查覆盖了${titlePrefix}所有场所。`))
+  if (prompt) children.push(paragraph(`排查说明：${prompt}`, { size: 22 }))
+
+  children.push(sectionHeading('（二） 检查依据', 2))
+  referenceStandards.forEach((item, index) => {
+    children.push(paragraph(`${index + 1}. ${item}；`, { size: 22, spacing: { after: 80 } }))
+  })
+
+  children.push(sectionHeading('（三） 现场问题隐患及整改建议措施清单', 2))
+  children.push(buildHazardChecklistTable({ enterprise, items, imagePaths, referenceStandards }))
+  children.push(new Paragraph({ children: [new PageBreak()] }))
+
+  children.push(sectionHeading('二、隐患排查综合意见'))
+  children.push(sectionHeading('（一） 安全管理改进方向及建议', 2))
+  comprehensiveOpinion.improvement_directions.forEach((item, index) => {
+    children.push(paragraph(`${index + 1}. ${item.title}`, { bold: true, size: 24 }))
+    children.push(paragraph(item.content, { size: 22 }))
+  })
+  children.push(sectionHeading('（二） 综合建议', 2))
+  children.push(paragraph(comprehensiveOpinion.general_suggestions, { size: 22 }))
+
+  if (rawText) {
+    children.push(sectionHeading('附：AI 原始分析内容'))
+    rawText.split(/\n+/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+      children.push(paragraph(line, { size: 22 }))
+    })
+  }
+
+  return children
+}
+
+const writeWordReport = async ({ prompt, result, imagePaths = [], enterprise, compilerUnit, auditorName }) => {
+  const reportData = buildReportData({ prompt, result, imagePaths, enterprise })
+  const templateWordPath = await writeWordReportFromTemplate({ reportData, compilerUnit, auditorName })
+  if (templateWordPath) return templateWordPath
+
+  const fileName = `report_${Date.now()}.docx`
+  const wordPath = path.join('uploads', fileName)
+  const fullPath = path.join(__dirname, '..', wordPath)
+
+  const doc = new Document({
+    styles: {
+      default: { document: { run: { font: FONT, size: 24 } } },
+      paragraphStyles: [
+        {
+          id: 'Heading1',
+          name: 'Heading 1',
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickFormat: true,
+          run: { size: 30, bold: true, font: FONT },
+          paragraph: { spacing: { before: 220, after: 160 }, outlineLevel: 0 },
+        },
+        {
+          id: 'Heading2',
+          name: 'Heading 2',
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickFormat: true,
+          run: { size: 26, bold: true, font: FONT },
+          paragraph: { spacing: { before: 180, after: 120 }, outlineLevel: 1 },
+        },
+      ],
+    },
+    sections: [{
+      properties: { page: { size: { width: A4_WIDTH, height: 16838 } } },
+      children: buildWordChildren({
+        ...reportData,
+        compilerUnit,
+        auditorName,
+      }),
+    }],
+  })
+
+  const buffer = await Packer.toBuffer(doc)
+  fs.writeFileSync(fullPath, buffer)
+  return wordPath.replace(/\\/g, '/')
+}
+
+const writePdfTextBlock = (doc, title, value) => {
+  doc.fontSize(13).text(title, { continued: false })
+  doc.moveDown(0.2)
+  doc.fontSize(11).text(value || '待补充', { align: 'left' })
+  doc.moveDown(0.6)
+}
+
+const writePdfSection = (doc, title) => {
+  doc.moveDown(0.4)
+  doc.fontSize(16).text(title)
+  doc.moveDown(0.3)
+}
+
+const convertWordToPdf = (wordPath) => {
+  const scriptPath = path.join(__dirname, '..', 'tools', 'convertWordToPdf.py')
+  if (!fs.existsSync(scriptPath)) return null
+
+  const absoluteWordPath = path.isAbsolute(wordPath)
+    ? wordPath
+    : path.join(__dirname, '..', wordPath)
+  if (!fs.existsSync(absoluteWordPath)) return null
+
+  const fileName = `report_${Date.now()}.pdf`
+  const pdfPath = path.join('uploads', fileName)
+  const absolutePdfPath = path.join(__dirname, '..', pdfPath)
+  const result = spawnSync('py', [scriptPath, absoluteWordPath, absolutePdfPath], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 120000,
+  })
+
+  if (result.status === 0 && fs.existsSync(absolutePdfPath)) {
+    return pdfPath.replace(/\\/g, '/')
+  }
+  console.error('[docService] Word to PDF conversion failed:', result.stderr || result.stdout)
+  return null
+}
+
+const writePdfReportFromWordTemplate = async ({ prompt, result, imagePaths = [], enterprise, compilerUnit, auditorName }) => {
+  try {
+    const wordPath = await writeWordReport({
+      prompt,
+      result,
+      imagePaths,
+      enterprise,
+      compilerUnit,
+      auditorName,
+    })
+    const pdfPath = convertWordToPdf(wordPath)
+    if (pdfPath) {
+      const absoluteWordPath = path.isAbsolute(wordPath)
+        ? wordPath
+        : path.join(__dirname, '..', wordPath)
+      try { if (fs.existsSync(absoluteWordPath)) fs.unlinkSync(absoluteWordPath) } catch (error) { /* ignore cleanup errors */ }
+      return pdfPath
+    }
+  } catch (error) {
+    console.error('[docService] template PDF generation failed:', error)
+  }
+  return null
+}
+
+const writePdfReport = async ({ prompt, result, imagePaths = [], enterprise, compilerUnit, auditorName }) => {
+  const templatePdfPath = await writePdfReportFromWordTemplate({
+    prompt,
+    result,
+    imagePaths,
+    enterprise,
+    compilerUnit,
+    auditorName,
+  })
+  if (templatePdfPath) return templatePdfPath
+
+  const reportData = buildReportData({ prompt, result, imagePaths, enterprise })
+  const fileName = `report_${Date.now()}.pdf`
+  const pdfPath = path.join('uploads', fileName)
+  const fullPath = path.join(__dirname, '..', pdfPath)
+
+  const pdfDoc = new PDFDocument({ margin: 48, size: 'A4', bufferPages: true })
+  const stream = fs.createWriteStream(fullPath)
+  const normalFontPath = 'C:/Windows/Fonts/simfang.ttf'
+  const boldFontPath = 'C:/Windows/Fonts/simhei.ttf'
+  const kaiFontPath = 'C:/Windows/Fonts/simkai.ttf'
+
+  if (fs.existsSync(normalFontPath)) pdfDoc.registerFont('normal', normalFontPath)
+  if (fs.existsSync(boldFontPath)) pdfDoc.registerFont('bold', boldFontPath)
+  if (fs.existsSync(kaiFontPath)) pdfDoc.registerFont('kai', kaiFontPath)
+  pdfDoc.font(fs.existsSync(normalFontPath) ? 'normal' : 'Helvetica')
+  pdfDoc.pipe(stream)
+
+  const projectName = normalizeText(reportData.enterprise.project_name)
+  const titlePrefix = projectName ? `${reportData.enterprise.name} ${projectName}` : reportData.enterprise.name
+
+  const useFont = (name) => {
+    if (name === 'bold' && fs.existsSync(boldFontPath)) return pdfDoc.font('bold')
+    if (name === 'kai' && fs.existsSync(kaiFontPath)) return pdfDoc.font('kai')
+    if (fs.existsSync(normalFontPath)) return pdfDoc.font('normal')
+    return pdfDoc.font('Helvetica')
+  }
+  const addPage = () => pdfDoc.addPage({ margin: 48, size: 'A4' })
+  const writeTitle = (text, size = 16) => {
+    useFont('bold').fontSize(size).text(text, { align: 'center' })
+    pdfDoc.moveDown(0.7)
+    useFont('normal')
+  }
+  const writePara = (text, options = {}) => {
+    useFont(options.bold ? 'bold' : (options.kai ? 'kai' : 'normal'))
+      .fontSize(options.size || 11)
+      .text(text || '待补充', {
+        align: options.align || 'left',
+        indent: options.indent || 0,
+        lineGap: options.lineGap ?? 5,
+      })
+    pdfDoc.moveDown(options.after ?? 0.45)
+    useFont('normal')
+  }
+  const writeSectionTitle = (text) => {
+    pdfDoc.moveDown(0.3)
+    writePara(text, { bold: true, size: 15, after: 0.25 })
+  }
+  const drawTableRow = (cells, widths, options = {}) => {
+    const startX = pdfDoc.x
+    const startY = pdfDoc.y
+    const padding = 5
+    const heights = cells.map((cell, index) => {
+      useFont(options.header ? 'bold' : 'normal').fontSize(options.size || 9)
+      return pdfDoc.heightOfString(String(cell || ''), {
+        width: widths[index] - padding * 2,
+        lineGap: 2,
+      }) + padding * 2
+    })
+    const rowHeight = Math.max(options.minHeight || 26, ...heights)
+    if (startY + rowHeight > pdfDoc.page.height - pdfDoc.page.margins.bottom) {
+      addPage()
+    }
+    let x = pdfDoc.x
+    const y = pdfDoc.y
+    cells.forEach((cell, index) => {
+      pdfDoc.rect(x, y, widths[index], rowHeight).stroke()
+      useFont(options.header ? 'bold' : 'normal')
+        .fontSize(options.size || 9)
+        .text(String(cell || ''), x + padding, y + padding, {
+          width: widths[index] - padding * 2,
+          lineGap: 2,
+          align: options.align || 'left',
+        })
+      x += widths[index]
+    })
+    pdfDoc.x = startX
+    pdfDoc.y = y + rowHeight
+  }
+
+  writeTitle(reportData.enterprise.name, 20)
+  writeTitle(projectName || '项目部', 18)
+  pdfDoc.moveDown(1.5)
+  writeTitle(DEFAULT_REPORT_TITLE, 24)
+  pdfDoc.moveDown(2)
+  ;[
+    ['编制单位', compilerUnit || 'XXXX安全技术咨询有限公司'],
+    ['编制人员', reportData.enterprise.inspector_name],
+    ['审核人员', auditorName || '待补充'],
+    ['编制日期', formatDateCN(reportData.enterprise.inspection_date)],
+    ['联系电话', reportData.enterprise.phone],
+    ['电子邮箱', reportData.enterprise.email || '待补充'],
+  ].forEach(([label, value]) => writePara(`${label}：${value || '待补充'}`, { size: 12, indent: 110, after: 0.35 }))
+
+  addPage()
+  writeTitle('保密公正性声明', 18)
+  writePara('为保证安全生产技术咨询服务工作的公正性与有效性，经双方协商，共同做以下承诺：', { size: 11 })
+  CONFIDENTIALITY_CLAUSES.forEach((clause, index) => {
+    writePara(`${index + 1}. ${clause}`, { size: 10.5 })
+  })
+  pdfDoc.moveDown(1)
+  writePara('甲方：                              乙方：', { size: 11 })
+  writePara('签字（盖章）：                      签字（盖章）：', { size: 11 })
+  writePara('年   月   日                        年   月   日', { size: 11 })
+
+  addPage()
+  writeTitle('服 务 承 诺 书', 18)
+  writePara('为确保咨询服务质量到位，最大限度地满足客户要求，并为客户提供增值服务，现做出以下郑重承诺：', { size: 11 })
+  SERVICE_COMMITMENTS.forEach((clause) => {
+    writePara(`★  ${clause}`, { size: 10.5 })
+  })
+
+  addPage()
+  writeTitle('目  录', 18)
+  ;[
+    '一、隐患排查',
+    '    （一）隐患排查形式',
+    '    （二）检查依据',
+    '    （三）现场问题隐患及整改建议措施清单',
+    '二、隐患排查综合意见',
+    '    （一）安全管理改进方向及建议',
+    '    （二）综合建议',
+  ].forEach((line) => writePara(line, { size: 12, after: 0.25 }))
+
+  addPage()
+  writeTitle(reportData.enterprise.name, 17)
+  writeTitle(projectName || '项目部', 16)
+  writeTitle(DEFAULT_REPORT_TITLE, 18)
+  writeSectionTitle('一、隐患排查')
+  writeSectionTitle('（一）隐患排查形式')
+  writePara(`本次隐患排查采用资料核对、现场照片识别与安全生产法规标准比对相结合的方式开展。排查说明：${reportData.prompt || '无'}`, { size: 11, indent: 22 })
+  writeSectionTitle('（二）检查依据')
+  reportData.referenceStandards.forEach((item, index) => {
+    writePara(`${index + 1}. ${item.endsWith('；') ? item : `${item}；`}`, { size: 11, after: 0.25 })
+  })
+
+  writeSectionTitle('（三）现场问题隐患及整改建议措施清单')
+  drawTableRow(
+    ['企业\n地点', '现场存在问题（隐患描述及图片）', '隐患\n等级', '整改建议', '责任\n划分'],
+    [58, 202, 48, 160, 55],
+    { header: true, align: 'center', minHeight: 34, size: 8.6 }
+  )
+  reportData.items.forEach((item, index) => {
+    drawTableRow([
+      item.location || projectName || reportData.enterprise.region || '现场',
+      item.hazard_description || '待补充',
+      item.hazard_level || DEFAULT_HAZARD_LEVEL,
+      item.suggestion || '建议结合现场情况补充具体整改措施。',
+      item.responsibility || DEFAULT_RESPONSIBILITY,
+    ], [58, 202, 48, 160, 55], { minHeight: 60, size: 8.4 })
+
+    const imagePath = getItemImagePath(item, index, reportData.imagePaths)
+    if (imagePath && fs.existsSync(imagePath)) {
+      try {
+        if (pdfDoc.y > pdfDoc.page.height - 250) addPage()
+        writePara(`隐患图片 ${index + 1}`, { kai: true, size: 10, align: 'center', after: 0.2 })
+        pdfDoc.image(imagePath, pdfDoc.page.margins.left + 72, pdfDoc.y, { fit: [360, 210], align: 'center' })
+        pdfDoc.y += 220
+      } catch (error) {
+        // ignore image rendering errors
+      }
+    }
+  })
+
+  addPage()
+  writeSectionTitle('二、隐患排查综合意见')
+  writeSectionTitle('（一）安全管理改进方向及建议')
+  reportData.comprehensiveOpinion.improvement_directions.forEach((item, index) => {
+    writePara(`${index + 1}. ${item.title}`, { bold: true, size: 11 })
+    writePara(item.content, { size: 11, indent: 22 })
+  })
+  writeSectionTitle('（二）综合建议')
+  writePara(reportData.comprehensiveOpinion.general_suggestions, { size: 11, indent: 22 })
+
+  if (reportData.rawText) {
+    writeSectionTitle('附：AI 原始分析内容')
+    writePara(reportData.rawText, { size: 10 })
+  }
+
+  pdfDoc.end()
+
+  return new Promise((resolve, reject) => {
+    stream.on('finish', () => resolve(pdfPath.replace(/\\/g, '/')))
+    stream.on('error', reject)
+  })
+}
 
 const docService = {
-  /**
-   * 按模板生成 Word 排查报告
-   *
-   * @param {object} params
-   * @param {object} params.enterprise       — 企业信息（含 name, project_name, inspector_name, region, address）
-   * @param {string} params.result           — AI 分析结果 JSON 字符串
-   * @param {string[]} params.imagePaths     — 隐患图片本地路径数组
-   * @param {string} [params.compilerUnit]   — 编制单位（乙方，管理员填写，留空不显示）
-   * @param {string} [params.auditorName]    — 审核人员
-   * @returns {Promise<string>} Word 文件相对路径
-   */
-  async generateTemplateReport({ enterprise, result, imagePaths = [], compilerUnit, auditorName }) {
-    const fileName = `report_${Date.now()}.docx`
-    const wordPath = path.join('uploads', fileName)
-    const fullPath = path.join(__dirname, '..', wordPath)
-    const today = new Date()
-    const projectTitle = enterprise.project_name
-      ? `${enterprise.name || ''} ${enterprise.project_name}`
-      : (enterprise.name || '')
-    const reportTitle = `${projectTitle}\n安全生产隐患排查报告`
-
-    const structData = parseResult(result)
-    const items = structData.items
-
-    const children = []
-
-    // ===== 封面页 =====
-    children.push(p('', { spacing: { after: 600 } }))
-    children.push(p(reportTitle, { size: 36, bold: true, alignment: AlignmentType.CENTER, spacing: { after: 400 } }))
-
-    // 编制信息表格
-    const infoRows = [
-      ['编制单位：', compilerUnit || '（待补充）'],
-      ['编制人员：', enterprise.inspector_name || '（待补充）'],
-      ['审核人员：', auditorName || '（待补充）'],
-      ['编制日期：', formatDateCN(today)],
-      ['联系电话：', '（待补充）'],
-      ['电子邮箱：', '（待补充）'],
-    ]
-    children.push(makeTable(['项目', '内容'], infoRows, [2500, 6860]))
-    children.push(new Paragraph({ children: [new PageBreak()] }))
-
-    // ===== 保密公正性声明 =====
-    children.push(heading1('保密公正性声明'))
-    children.push(p('为保证安全生产技术咨询服务工作的公正性与有效性，经双方协商，共同做以下承诺：'))
-    保密声明条款.forEach((clause, i) => {
-      children.push(p(`${i + 1}. ${clause}`, { spacing: { after: 100 } }))
-    })
-    children.push(p(''))
-    children.push(p('甲方：                              乙方：'))
-    children.push(p('签字（盖章）：　　　　              签字（盖章）：'))
-    children.push(p(`年   月   日                        ${formatDateCN(today)}`))
-    children.push(new Paragraph({ children: [new PageBreak()] }))
-
-    // ===== 服务承诺书 =====
-    children.push(heading1('服 务 承 诺 书'))
-    children.push(p('为确保我们咨询服务质量到位，最大限度地满足客户的要求，并为客户提供增值的服务。我们对贵单位的服务做出以下郑重承诺：'))
-    服务承诺条款.forEach((clause) => {
-      children.push(p(`★  ${clause}`, { spacing: { after: 80 } }))
-    })
-    children.push(new Paragraph({ children: [new PageBreak()] }))
-
-    // ===== 目录（手动构建，确保所有阅读器可见） =====
-    children.push(heading1('目  录'))
-    const tocItems = [
-      '一、隐患排查',
-      '    （一）隐患排查形式',
-      '    （二）检查依据',
-      '    （三）现场问题隐患及整改建议措施清单',
-      '二、隐患排查综合意见',
-      '    （一）安全管理改进方向及建议',
-      '    （二）综合建议',
-    ]
-    tocItems.forEach((line) => {
-      children.push(p(line, { size: 24, spacing: { after: 80 } }))
-    })
-    children.push(new Paragraph({ children: [new PageBreak()] }))
-
-    // ===== 一、隐患排查 =====
-    children.push(p(reportTitle, { size: 32, bold: true, alignment: AlignmentType.CENTER, spacing: { after: 200 } }))
-    children.push(heading1('一、隐患排查'))
-
-    // （一）隐患排查形式
-    children.push(heading2('（一）隐患排查形式'))
-    children.push(p(`现场工作场所及安全办公区域检查。此次检查覆盖了${projectTitle}所有场所。`))
-
-    // （二）检查依据（由 AI 根据实际隐患动态引用）
-    children.push(heading2('（二）检查依据'))
-    const refStandards = structData.referenceStandards.length
-      ? structData.referenceStandards
-      : ['《中华人民共和国安全生产法》']
-    refStandards.forEach((law) => {
-      children.push(p(`${law}；`))
-    })
-
-    // （三）问题清单
-    children.push(heading2('（三）现场问题隐患及整改建议措施清单'))
-    if (items.length) {
-      const colWidths = [1200, 1000, 2500, 800, 2500, 1360]
-      const headerCells = ['企业', '地点', '现场存在问题（隐患描述及图片）', '隐患等级', '整改建议', '责任划分']
-
-      const rows = []
-      for (let idx = 0; idx < items.length; idx++) {
-        const item = items[idx]
-        // 图片按索引匹配（顺序与 AI prompt 中的图片清单一致）
-        const img = imagePaths[idx] || null
-
-        const cellContent = []
-        // 如果有图片，插入
-        if (img && fs.existsSync(img)) {
-          try {
-            cellContent.push(new Paragraph({
-              children: [new ImageRun({ type: 'jpeg', data: fs.readFileSync(img), transformation: { width: 200, height: 150 }, altText: { title: '隐患图片', description: '', name: 'img' } })],
-              spacing: { after: 60 },
-            }))
-          } catch (e) { /* 图片加载失败则跳过 */ }
-        }
-        cellContent.push(p(item.hazard_description || '', { size: 20 }))
-
-        rows.push([
-          [p(enterprise.name || '', { size: 20, bold: true })],
-          [p(enterprise.project_name || enterprise.region || '', { size: 20 })],
-          cellContent,
-          [p(item.hazard_level || '一般隐患', { size: 20, alignment: AlignmentType.CENTER })],
-          [p(item.suggestion || '', { size: 20 })],
-          [p(item.responsibility || '', { size: 20 })],
-        ])
-      }
-      children.push(makeTable(headerCells, rows, colWidths))
-    } else {
-      children.push(p('（暂无隐患排查项目）'))
-    }
-
-    children.push(new Paragraph({ children: [new PageBreak()] }))
-
-    // ===== 二、隐患排查综合意见（由 AI 根据本次隐患动态生成） =====
-    children.push(heading1('二、隐患排查综合意见'))
-
-    const opinion = structData.comprehensiveOpinion
-    if (opinion && Array.isArray(opinion.improvement_directions) && opinion.improvement_directions.length) {
-      children.push(heading2('（一）安全管理改进方向及建议'))
-      opinion.improvement_directions.forEach((dir, i) => {
-        children.push(p(`${i + 1}. ${dir.title || ''}`, { size: 24, bold: true, spacing: { after: 80 } }))
-        children.push(p(dir.content || '', { spacing: { after: 160 } }))
-      })
-
-      if (opinion.general_suggestions) {
-        children.push(heading2('（二）综合建议'))
-        children.push(p(opinion.general_suggestions))
-      }
-    } else {
-      // 降级：AI 未返回综合意见时给出提示
-      children.push(p('（AI 未生成综合意见，请重新分析或手动补充。）'))
-    }
-
-    // 生成文档
-    const doc = new Document({
-      styles: {
-        default: { document: { run: { font: FONT, size: 24 } } },
-        paragraphStyles: [
-          { id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-            run: { size: 32, bold: true, font: FONT },
-            paragraph: { spacing: { before: 240, after: 240 }, outlineLevel: 0 } },
-          { id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-            run: { size: 28, bold: true, font: FONT },
-            paragraph: { spacing: { before: 180, after: 180 }, outlineLevel: 1 } },
-        ],
-      },
-      sections: [{ properties: { page: { size: { width: A4_WIDTH, height: 16838 } } }, children }],
-    })
-
-    const buffer = await Packer.toBuffer(doc)
-    fs.writeFileSync(fullPath, buffer)
-    return wordPath.replace(/\\/g, '/')
+  async generateTemplateReport({ enterprise, prompt, result, imagePaths = [], compilerUnit, auditorName }) {
+    return writeWordReport({ enterprise, prompt, result, imagePaths, compilerUnit, auditorName })
   },
 
-  /**
-   * 旧版 Word 生成（保留向后兼容）
-   * @deprecated 使用 generateTemplateReport 替代
-   */
-  async generateWord(prompt, result, imagePath) {
-    const fileName = `result_${Date.now()}.docx`
-    const wordPath = path.join('uploads', fileName)
-    const fullPath = path.join(__dirname, '..', wordPath)
-
-    const children = [
-      p('智能隐患排查报告', { size: 32, bold: true, alignment: AlignmentType.CENTER }),
-      p(`排查描述：${prompt || '无'}`, { spacing: { after: 200 } }),
-    ]
-
-    const imageList = Array.isArray(imagePath) ? imagePath : (imagePath ? [imagePath] : [])
-    imageList.forEach((pth, idx) => {
-      if (!pth || !fs.existsSync(pth)) return
-      try {
-        children.push(p(`图片 ${idx + 1}`, { bold: true, size: 22 }))
-        children.push(new Paragraph({
-          children: [new ImageRun({ type: 'jpeg', data: fs.readFileSync(pth), transformation: { width: 400, height: 300 }, altText: { title: '图片', description: '', name: `img${idx}` } })],
-          alignment: AlignmentType.CENTER,
-        }))
-      } catch (e) { /* skip */ }
-    })
-
-    const structData = parseResult(result)
-    if (structData) {
-      const list = Array.isArray(structData.items) ? structData.items : [structData]
-      list.forEach((item, idx) => {
-        if (list.length > 1) children.push(p(`隐患分析（${idx + 1}）`, { bold: true, size: 28 }))
-        children.push(p('隐患描述：', { bold: true, size: 26 }))
-        children.push(p(item.hazard_description || '无'))
-        children.push(p('排查依据：', { bold: true, size: 26 }))
-        children.push(p(item.basis || '无'))
-        children.push(p('整改建议：', { bold: true, size: 26 }))
-        children.push(p(item.suggestion || '无'))
-      })
-    } else {
-      (result || '').split('\n').forEach((line) => children.push(p(line)))
+  async generateTemplatePDF({ enterprise, prompt, result, imagePaths = [], compilerUnit, auditorName, wordPath }) {
+    if (wordPath) {
+      const pdfPath = convertWordToPdf(wordPath)
+      if (pdfPath) return pdfPath
     }
-
-    const doc = new Document({ sections: [{ children }] })
-    const buffer = await Packer.toBuffer(doc)
-    fs.writeFileSync(fullPath, buffer)
-    return wordPath.replace(/\\/g, '/')
+    return writePdfReport({ enterprise, prompt, result, imagePaths, compilerUnit, auditorName })
   },
 
-  /**
-   * PDF 生成（保持兼容）
-   */
-  async generatePDF(prompt, result, imagePath) {
-    const fileName = `result_${Date.now()}.pdf`
-    const pdfPath = path.join('uploads', fileName)
-    const fullPath = path.join(__dirname, '..', pdfPath)
-
-    const pdfDoc = new PDFDocument({ margin: 50 })
-    const pdfStream = fs.createWriteStream(fullPath)
-
-    const fontPath = 'C:/Windows/Fonts/simhei.ttf'
-    if (fs.existsSync(fontPath)) pdfDoc.font(fontPath)
-
-    pdfDoc.pipe(pdfStream)
-    pdfDoc.fontSize(20).text('智能隐患排查报告', { align: 'center' })
-    pdfDoc.moveDown()
-    pdfDoc.fontSize(12).text(`排查描述：${prompt || '无'}`)
-    pdfDoc.moveDown()
-
-    const imageList = Array.isArray(imagePath) ? imagePath : (imagePath ? [imagePath] : [])
-    imageList.forEach((pth, idx) => {
-      if (!pth || !fs.existsSync(pth)) return
-      try {
-        pdfDoc.fontSize(12).text(`图片 ${idx + 1}`)
-        pdfDoc.image(pth, { fit: [400, 300], align: 'center' })
-        pdfDoc.moveDown()
-      } catch (e) { /* skip */ }
+  async generateWord(prompt, result, imagePath, options = {}) {
+    return writeWordReport({
+      prompt,
+      result,
+      imagePaths: toImageList(imagePath),
+      enterprise: options.enterprise,
+      compilerUnit: options.compilerUnit,
+      auditorName: options.auditorName,
     })
+  },
 
-    const structData = parseResult(result)
-    if (structData) {
-      const list = Array.isArray(structData.items) ? structData.items : [structData]
-      list.forEach((item, idx) => {
-        if (list.length > 1) pdfDoc.fontSize(14).text(`隐患分析（${idx + 1}）`)
-        pdfDoc.fontSize(13).text('隐患描述：')
-        pdfDoc.fontSize(12).text(item.hazard_description || '无').moveDown()
-        pdfDoc.fontSize(13).text('排查依据：')
-        pdfDoc.fontSize(12).text(item.basis || '无').moveDown()
-        pdfDoc.fontSize(13).text('整改建议：')
-        pdfDoc.fontSize(12).text(item.suggestion || '无').moveDown()
-      })
-    } else {
-      pdfDoc.fontSize(12).text(result)
+  async generatePDF(prompt, result, imagePath, options = {}) {
+    if (options.wordPath) {
+      const pdfPath = convertWordToPdf(options.wordPath)
+      if (pdfPath) return pdfPath
     }
-
-    pdfDoc.end()
-    return new Promise((resolve) => {
-      pdfStream.on('finish', () => resolve(pdfPath.replace(/\\/g, '/')))
-      pdfStream.on('error', () => resolve(null))
+    return writePdfReport({
+      prompt,
+      result,
+      imagePaths: toImageList(imagePath),
+      enterprise: options.enterprise,
+      compilerUnit: options.compilerUnit,
+      auditorName: options.auditorName,
     })
   },
 }

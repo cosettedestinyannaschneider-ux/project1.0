@@ -13,35 +13,49 @@ const userDal = {
    * @param {string} role
    * @param {number} [departmentId]
    */
-  async createUser(username, password, role = 'user', departmentId = null) {
-    const [result] = await db.execute(
+  async createUser(username, password, role = 'user', departmentId = null, executor = db) {
+    const [result] = await executor.execute(
       'INSERT INTO users (username, password, role, department_id) VALUES (?, ?, ?, ?)',
       [username, password, role, departmentId]
     )
     return result.insertId
   },
 
-  async findAll() {
-    const [rows] = await db.execute(
-      `SELECT u.id, u.username, u.role, u.status, u.department_id,
-              u.last_login_at, u.created_at,
-              d.name AS department_name
-       FROM users u
-       LEFT JOIN departments d ON d.id = u.department_id`
-    )
+  /**
+   * 查询全部用户，默认包含已禁用用户
+   * @param {boolean} includeDisabled 是否包含已禁用用户，默认 true
+   */
+  async findAll(includeDisabled = true) {
+    let sql = `SELECT u.id, u.username, u.role, u.status, u.department_id,
+                      u.last_login_at, u.created_at,
+                      d.name AS department_name,
+                      d.enterprise_id,
+                      e.name AS enterprise_name
+               FROM users u
+               LEFT JOIN departments d ON d.id = u.department_id
+               LEFT JOIN enterprises e ON e.id = d.enterprise_id`
+    if (!includeDisabled) {
+      sql += " WHERE u.status <> 'disabled'"
+    }
+    sql += ' ORDER BY u.id ASC'
+    const [rows] = await db.execute(sql)
     return rows
   },
 
-  async updateUser(id, username, password, role, departmentId = null) {
+  async updateUser(id, username, password, role, departmentId = null, status = null, executor = db) {
     let sql = 'UPDATE users SET username = ?, role = ?, department_id = ?'
     let params = [username, role, departmentId]
     if (password) {
       sql += ', password = ?'
       params.push(password)
     }
+    if (status) {
+      sql += ', status = ?'
+      params.push(status)
+    }
     sql += ' WHERE id = ?'
     params.push(id)
-    return await db.execute(sql, params)
+    return await executor.execute(sql, params)
   },
 
   async updatePassword(id, passwordHash) {

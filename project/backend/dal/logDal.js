@@ -1,8 +1,8 @@
 const db = require('./db')
 
 const logDal = {
-  async logAction(userId, action, details, ipAddress = null) {
-    const [res] = await db.execute(
+  async logAction(userId, action, details, ipAddress = null, executor = db) {
+    const [res] = await executor.execute(
       'INSERT INTO action_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
       [userId, action, JSON.stringify(details), ipAddress]
     )

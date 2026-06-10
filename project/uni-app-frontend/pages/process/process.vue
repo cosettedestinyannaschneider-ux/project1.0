@@ -45,7 +45,7 @@
         <view class="menu-toggle" @click="showSidebar = !showSidebar">☰</view>
         <text class="header-title">{{ currentSessionTitle || '智检助手' }}</text>
         <view class="header-btns">
-          <button class="mini-btn admin-btn" v-if="user.role === 'admin'" @click="goToAdmin">管理</button>
+          <button class="mini-btn admin-btn" v-if="user.role === 'admin'" @click="goToAdmin">系统管理</button>
           <button class="mini-btn logout-btn" @click="handleLogout">退出</button>
         </view>
       </view>
@@ -466,10 +466,6 @@ const saveEditResult = (msg) => {
 onMounted(() => {
   const storedUser = normalizeUser(uni.getStorageSync('user'))
   if (storedUser && storedUser.id) {
-    if (storedUser.role === 'admin') {
-      uni.reLaunch({ url: '/pages/admin/admin' })
-      return
-    }
     user.value = storedUser
     fetchModelList()
     fetchSessions()
@@ -538,7 +534,7 @@ const uploadHazardImages = async (filePaths) => {
           url: apiUrl('/api/hazard/images/upload'),
           filePath: fp,
           name: 'files',
-          formData: { user_id: user.value.id },
+          formData: { user_id: user.value.id, enterprise_id: currentEnterpriseId.value || '' },
           success: (res) => {
             let data
             try {
@@ -656,6 +652,9 @@ const onModelChange = (e) => {
   selectedModelId.value = modelList.value[e.detail.value]?.id || null
 }
 
+/** 当前用户所属企业 ID，用于隐患图片上传和 AI 分析时自动关联 */
+const currentEnterpriseId = ref(null)
+
 const fetchEnterpriseInfo = () => {
   uni.request({
     url: apiUrl('/api/enterprise/get'),
@@ -667,6 +666,8 @@ const fetchEnterpriseInfo = () => {
         enterpriseForm.value = d.data && typeof d.data === 'object' && Object.keys(d.data).length
           ? d.data
           : { name: d.name || '', region: d.region || '', address: d.address || '', contact: d.contact || '', phone: d.phone || '', project_name: d.project_name || '', industry: d.industry || '', inspector_name: d.inspector_name || '' }
+        /** 保存企业 ID 用于后续上传和分析时自动关联 */
+        currentEnterpriseId.value = d.id || null
       }
     }
   })
@@ -828,6 +829,7 @@ const handleSend = () => {
         prompt: currentPrompt,
         session_id: currentSessionId.value,
         image_ids: selectedIds,
+        enterprise_id: currentEnterpriseId.value || null,
         model_id: selectedModelId.value || '',
       },
       success: (res) => handleResponse(res.data),
@@ -964,7 +966,14 @@ const toggleUserMenu = () => {
 }
 
 const goToAdmin = () => {
-  uni.navigateTo({ url: '/pages/admin/admin' })
+  uni.showActionSheet({
+    itemList: ['用户管理', '知识库管理', 'AI模型配置', '操作日志', '企业数据查询', '报告模板', '数据备份'],
+    success: (res) => {
+      const pages = ['users', 'knowledge', 'model-config', 'logs', 'enterprises', 'templates', 'backup']
+      const page = pages[res.tapIndex]
+      if (page) uni.navigateTo({ url: `/pages/admin/${page}` })
+    }
+  })
 }
 </script>
 

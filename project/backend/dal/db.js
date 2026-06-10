@@ -4,7 +4,8 @@ require('dotenv').config();
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '123456',
+  // 数据库密码只能通过本地 .env 注入，禁止在仓库中保留默认密码
+  password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'ai_project',
   charset: 'utf8mb4',
   waitForConnections: true,

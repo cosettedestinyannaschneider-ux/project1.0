@@ -80,14 +80,14 @@ export const unwrapResponse = (res) => {
   const data = res?.data ?? res
   if (data && typeof data === 'object') {
     if (Object.prototype.hasOwnProperty.call(data, 'success')) {
-      // 兼容 Result.js 平铺格式：user 字段可能直接放在顶层（id/username/role）
-      const user = data.user || (data.id ? { id: data.id, username: data.username, role: data.role, department_id: data.department_id } : null)
+      // 兼容 Result.js 平铺格式：仅当存在 role 字段时才视为用户身份数据
+      const user = data.user || (data.id && data.role ? { id: data.id, username: data.username, role: data.role, department_id: data.department_id } : null)
       return { ok: !!data.success, msg: data.msg || data.message, data: data.data, user, raw: data }
     }
     if (Object.prototype.hasOwnProperty.call(data, 'code')) {
       const ok = data.code === 0 || data.code === 200
-      // 同样兼容平铺格式
-      const user = data.user || (data.data?.user) || (data.id && !data.data ? { id: data.id, username: data.username, role: data.role } : null)
+      // 同样兼容平铺格式，避免将企业/部门 id 误判为 user
+      const user = data.user || (data.data?.user) || (data.id && data.role && !data.data ? { id: data.id, username: data.username, role: data.role } : null)
       return { ok, msg: data.msg, data: data.data, user, raw: data }
     }
   }

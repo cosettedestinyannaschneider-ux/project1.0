@@ -28,6 +28,10 @@ const knowledgeCategoryDal = require('./dal/knowledgeCategoryDal')
 const { responseMiddleware } = require('./common/Result')
 const { ErrorCode, ErrorMessage } = require('./common/ErrorCode')
 const C = require('./common/Constants')
+const adminAuth = require('./middleware/adminAuth')
+const adminUserRoutes = require('./routes/admin/userRoutes')
+const adminEnterpriseRoutes = require('./routes/admin/enterpriseRoutes')
+const adminDepartmentRoutes = require('./routes/admin/departmentRoutes')
 
 // =========================================================================
 // Express 初始化
@@ -91,24 +95,10 @@ const hazardUpload = multer({
 // 初始化数据库
 schemaInit.init().catch(err => console.error('[Server] Schema init failed:', err))
 
-// =========================================================================
-// 管理员鉴权中间件
-// =========================================================================
-const adminAuth = async (req, res, next) => {
-  const adminId = req.body?.admin_id || req.query?.admin_id || req.headers?.['x-admin-id']
-  if (!adminId) return res.fail(ErrorCode.ADMIN_REQUIRED)
-  try {
-    const admin = await userService.getUserById(adminId)
-    if (!admin || admin.role !== C.ROLE_ADMIN) {
-      return res.fail(ErrorCode.ADMIN_REQUIRED)
-    }
-    req.admin = admin
-    next()
-  } catch (err) {
-    console.error('[Server] adminAuth error:', err)
-    res.fail(ErrorCode.INTERNAL_ERROR)
-  }
-}
+// 阶段 B 管理路由按领域拆分，保持原接口路径不变
+app.use('/api/admin/users', adminUserRoutes)
+app.use('/api/admin/enterprises', adminEnterpriseRoutes)
+app.use('/api/admin/departments', adminDepartmentRoutes)
 
 // =========================================================================
 // 健康检查
@@ -287,7 +277,7 @@ app.post('/api/hazard/analyze', async (req, res) => {
   try {
     const enterprise = enterpriseId
       ? await enterpriseDal.findById(enterpriseId)
-      : await enterpriseDal.findByUserId(userId)
+      : await enterpriseDal.findByUserOrganization(userId)
     const images = await hazardImageDal.findByIds(userId, imageIds)
     if (!images.length) return res.fail(ErrorCode.IMAGE_NOT_FOUND)
 
@@ -546,90 +536,6 @@ app.get('/api/history/:user_id', async (req, res) => {
 })
 
 // =========================================================================
-// 管理员：用户管理
-// =========================================================================
-app.post('/api/admin/users/list', adminAuth, async (req, res) => {
-  try {
-    const users = await userService.getAllUsers(req.body.admin_id)
-    const usersWithStats = await Promise.all(users.map(async (u) => {
-      const history = await historyDal.findByUserId(u.id)
-      return { ...u, chatCount: history.length }
-    }))
-    res.success(usersWithStats)
-  } catch (err) {
-    res.fail(ErrorCode.PERMISSION_DENIED, err.message)
-  }
-})
-
-app.post('/api/admin/users/add', adminAuth, async (req, res) => {
-  try {
-    const { username, password, role, department_id } = req.body
-    if (!username || !password) return res.fail(ErrorCode.PARAM_MISSING)
-    const result = await userService.register(username, password, role || C.ROLE_USER, department_id ? Number(department_id) : null)
-    if (!result.success) return res.fail(ErrorCode.USERNAME_EXISTS, result.message)
-    res.success(null, '用户创建成功')
-  } catch (err) {
-    res.fail(ErrorCode.INTERNAL_ERROR, err.message)
-  }
-})
-
-app.post('/api/admin/users/update', adminAuth, async (req, res) => {
-  try {
-    const { admin_id, target_id, username, password, role, department_id } = req.body
-    if (!target_id || !username) return res.fail(ErrorCode.PARAM_MISSING)
-    await userService.updateUserInfo(admin_id, target_id, username, password, role || C.ROLE_USER, department_id ? Number(department_id) : null)
-    await logDal.logAction(admin_id, C.ACTION_ADMIN_UPDATE_USER, { target_id, username })
-    res.success(null, '用户信息已更新')
-  } catch (err) {
-    res.fail(ErrorCode.PERMISSION_DENIED, err.message)
-  }
-})
-
-app.post('/api/admin/users/delete', adminAuth, async (req, res) => {
-  try {
-    const { admin_id, target_id } = req.body
-    if (!target_id) return res.fail(ErrorCode.PARAM_MISSING)
-    await userService.removeUser(admin_id, target_id)
-    await logDal.logAction(admin_id, C.ACTION_ADMIN_DELETE_USER, { target_id })
-    res.success(null, '用户已禁用')
-  } catch (err) {
-    res.fail(ErrorCode.PERMISSION_DENIED, err.message)
-  }
-})
-
-// =========================================================================
-// 管理员：部门管理
-// =========================================================================
-app.post('/api/admin/departments/list', adminAuth, async (req, res) => {
-  try { res.success(await departmentDal.findAll()) }
-  catch (err) { res.fail(ErrorCode.DATABASE_ERROR) }
-})
-
-app.post('/api/admin/departments/add', adminAuth, async (req, res) => {
-  if (!req.body.name) return res.fail(ErrorCode.PARAM_MISSING, '缺少部门名称')
-  try {
-    const id = await departmentDal.create(req.body.name)
-    res.success({ id })
-  } catch (err) { res.fail(ErrorCode.DATABASE_ERROR) }
-})
-
-app.post('/api/admin/departments/update', adminAuth, async (req, res) => {
-  if (!req.body.id || !req.body.name) return res.fail(ErrorCode.PARAM_MISSING)
-  try {
-    await departmentDal.updateById(req.body.id, req.body.name)
-    res.success(null, '已更新')
-  } catch (err) { res.fail(ErrorCode.DATABASE_ERROR) }
-})
-
-app.post('/api/admin/departments/delete', adminAuth, async (req, res) => {
-  if (!req.body.id) return res.fail(ErrorCode.PARAM_MISSING)
-  try {
-    await departmentDal.deleteById(req.body.id)
-    res.success(null, '已删除')
-  } catch (err) { res.fail(ErrorCode.DATABASE_ERROR) }
-})
-
-// =========================================================================
 // 管理员：知识库管理
 // =========================================================================
 app.post('/api/admin/knowledge/list', adminAuth, async (req, res) => {
@@ -717,7 +623,7 @@ app.post('/api/admin/history', adminAuth, async (req, res) => {
 app.post('/api/enterprise/get', async (req, res) => {
   if (!req.body.user_id) return res.fail(ErrorCode.PARAM_MISSING, '缺少 user_id')
   try {
-    const data = await enterpriseDal.findByUserId(req.body.user_id)
+    const data = await enterpriseDal.findByUserOrganization(req.body.user_id)
     res.success(data || {})
   } catch (err) {
     res.fail(ErrorCode.DATABASE_ERROR)
@@ -728,8 +634,12 @@ app.post('/api/enterprise/update', async (req, res) => {
   const { user_id, name } = req.body
   if (!user_id || !name) return res.fail(ErrorCode.PARAM_MISSING)
   try {
+    const enterprise = await enterpriseDal.findByUserOrganization(user_id)
+    if (!enterprise) {
+      return res.fail(ErrorCode.PARAM_INVALID, '当前用户尚未分配所属企业和部门')
+    }
     const { region, address, contact, phone, industry, enterprise_type, scale, inspector_name, inspection_date, project_name } = req.body
-    await enterpriseDal.createOrUpdate(user_id, {
+    await enterpriseDal.updateById(enterprise.id, {
       name, region, address, contact, phone,
       industry, enterprise_type, scale,
       inspector_name, inspection_date,

@@ -9,25 +9,60 @@ CREATE DATABASE IF NOT EXISTS ai_project
 USE ai_project;
 
 -- ============================================================================
--- 1. 部门表（立项书：用户需填写所属部门）
+-- 1. 企业信息表：企业作为组织主数据，不再归属于单个用户
 -- ============================================================================
-CREATE TABLE departments (
-  id          INT           NOT NULL AUTO_INCREMENT,
-  name        VARCHAR(100)  NOT NULL,
-  created_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+CREATE TABLE enterprises (
+  id                INT           NOT NULL AUTO_INCREMENT,
+  user_id           INT           DEFAULT NULL COMMENT '历史归属用户，仅用于兼容旧数据，不作为组织归属依据',
+  name              VARCHAR(200)  NOT NULL COMMENT '企业名称',
+  region            VARCHAR(200)  DEFAULT NULL COMMENT '所在地区',
+  address           VARCHAR(500)  DEFAULT NULL COMMENT '详细地址',
+  contact           VARCHAR(100)  DEFAULT NULL COMMENT '联系人',
+  phone             VARCHAR(50)   DEFAULT NULL COMMENT '联系电话',
+  industry          VARCHAR(100)  DEFAULT NULL COMMENT '所属行业',
+  enterprise_type   VARCHAR(100)  DEFAULT NULL COMMENT '企业类型',
+  scale             VARCHAR(50)   DEFAULT NULL COMMENT '企业规模',
+  production_process TEXT         DEFAULT NULL COMMENT '生产工艺等扩展字段(JSON)',
+  inspector_name    VARCHAR(100)  DEFAULT NULL COMMENT '排查人员',
+  inspection_date   DATE          DEFAULT NULL COMMENT '排查日期',
+  inspection_status ENUM('pending','inspecting','rectification','completed') NOT NULL DEFAULT 'pending' COMMENT '排查状态',
+  project_name      VARCHAR(200)  DEFAULT NULL COMMENT '项目名称',
+  status            ENUM('active','archived') NOT NULL DEFAULT 'active',
+  created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_departments_name (name)
+  KEY idx_enterprises_user_id (user_id),
+  UNIQUE KEY uk_enterprises_name (name),
+  KEY idx_enterprises_region (region),
+  KEY idx_enterprises_inspection_status (inspection_status),
+  KEY idx_enterprises_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 2. 用户表（立项书 §四(一) 用户登录与权限管理模块）
+-- 2. 部门表：企业 1:N 部门
+-- ============================================================================
+CREATE TABLE departments (
+  id             INT           NOT NULL AUTO_INCREMENT,
+  enterprise_id  INT           NOT NULL COMMENT '所属企业',
+  name           VARCHAR(100)  NOT NULL,
+  created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_departments_enterprise_name (enterprise_id, name),
+  KEY idx_departments_enterprise_id (enterprise_id),
+  CONSTRAINT fk_departments_enterprise
+    FOREIGN KEY (enterprise_id) REFERENCES enterprises (id)
+    ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 3. 用户表：部门 1:N 用户，管理员允许不绑定部门
 -- ============================================================================
 CREATE TABLE users (
   id              INT           NOT NULL AUTO_INCREMENT,
   username        VARCHAR(100)  NOT NULL,
   password        VARCHAR(255)  NOT NULL COMMENT 'scrypt加盐哈希',
   role            VARCHAR(20)   NOT NULL DEFAULT 'user' COMMENT 'admin|user',
-  department_id   INT           DEFAULT NULL,
+  department_id   INT           DEFAULT NULL COMMENT '所属部门',
   status          ENUM('active','disabled','locked') NOT NULL DEFAULT 'active',
   login_attempts  INT           NOT NULL DEFAULT 0 COMMENT '连续登录失败次数',
   locked_until    DATETIME      DEFAULT NULL COMMENT '锁定到期时间',
@@ -44,37 +79,21 @@ CREATE TABLE users (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 3. 企业信息表（立项书 §四(二) 企业基本信息管理模块）
+-- 4. 用户权限关联表
 -- ============================================================================
-CREATE TABLE enterprises (
-  id                INT           NOT NULL AUTO_INCREMENT,
-  user_id           INT           NOT NULL COMMENT '归属用户',
-  name              VARCHAR(200)  NOT NULL COMMENT '企业名称',
-  region            VARCHAR(200)  DEFAULT NULL COMMENT '所在地区',
-  address           VARCHAR(500)  DEFAULT NULL COMMENT '详细地址',
-  contact           VARCHAR(100)  DEFAULT NULL COMMENT '联系人',
-  phone             VARCHAR(50)   DEFAULT NULL COMMENT '联系电话',
-  industry          VARCHAR(100)  DEFAULT NULL COMMENT '所属行业',
-  enterprise_type   VARCHAR(100)  DEFAULT NULL COMMENT '企业类型',
-  scale             VARCHAR(50)   DEFAULT NULL COMMENT '企业规模',
-  production_process TEXT         DEFAULT NULL COMMENT '生产工艺等扩展字段(JSON)',
-  inspector_name    VARCHAR(100)  DEFAULT NULL COMMENT '排查人员',
-  inspection_date   DATE          DEFAULT NULL COMMENT '排查日期',
-  status            ENUM('active','archived') NOT NULL DEFAULT 'active',
-  created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_enterprises_user_id (user_id),
-  KEY idx_enterprises_name (name),
-  KEY idx_enterprises_region (region),
-  KEY idx_enterprises_status (status),
-  CONSTRAINT fk_enterprises_user
+CREATE TABLE user_permissions (
+  user_id         INT          NOT NULL COMMENT '用户 ID',
+  permission_key  VARCHAR(100) NOT NULL COMMENT '权限标识',
+  created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '授权时间',
+  PRIMARY KEY (user_id, permission_key),
+  KEY idx_user_permissions_permission_key (permission_key),
+  CONSTRAINT fk_user_permissions_user
     FOREIGN KEY (user_id) REFERENCES users (id)
     ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户权限关联表';
 
 -- ============================================================================
--- 4. 隐患图片表（立项书 §四(五) 隐患图片上传与处理模块 + §9.5）
+-- 5. 隐患图片表（立项书 §四(五) 隐患图片上传与处理模块 + §9.5）
 -- ============================================================================
 CREATE TABLE hazard_images (
   id              INT           NOT NULL AUTO_INCREMENT,
@@ -237,6 +256,7 @@ CREATE TABLE action_logs (
 CREATE TABLE ai_model_configs (
   id                INT           NOT NULL AUTO_INCREMENT,
   name              VARCHAR(100)  NOT NULL COMMENT '配置名称',
+  provider          VARCHAR(100)  NOT NULL COMMENT '模型服务商',
   base_url          VARCHAR(500)  NOT NULL COMMENT 'API地址',
   api_key_encrypted VARCHAR(500)  NOT NULL COMMENT '加密存储的API密钥',
   model_name        VARCHAR(100)  NOT NULL COMMENT '模型标识',
@@ -265,6 +285,31 @@ CREATE TABLE report_templates (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
+-- 数据库备份记录表
+-- ============================================================================
+CREATE TABLE backup_records (
+  id            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '备份记录主键',
+  file_name     VARCHAR(255)  NOT NULL COMMENT '备份文件名',
+  file_path     VARCHAR(500)  NOT NULL COMMENT '备份文件路径',
+  file_size     BIGINT UNSIGNED DEFAULT NULL COMMENT '备份文件大小（字节）',
+  backup_type   ENUM('manual','automatic') NOT NULL DEFAULT 'manual' COMMENT '备份类型',
+  status        ENUM('pending','running','completed','failed') NOT NULL DEFAULT 'pending' COMMENT '备份状态',
+  error_message TEXT          DEFAULT NULL COMMENT '失败原因',
+  created_by    INT           DEFAULT NULL COMMENT '创建用户；自动任务可为空',
+  started_at    DATETIME      DEFAULT NULL COMMENT '开始时间',
+  completed_at  DATETIME      DEFAULT NULL COMMENT '完成时间',
+  created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (id),
+  KEY idx_backup_records_status (status),
+  KEY idx_backup_records_type (backup_type),
+  KEY idx_backup_records_created_by (created_by),
+  KEY idx_backup_records_created_at (created_at),
+  CONSTRAINT fk_backup_records_created_by
+    FOREIGN KEY (created_by) REFERENCES users (id)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据库备份记录表';
+
+-- ============================================================================
 -- 分类种子数据（安全生产行业分类）
 -- ============================================================================
 INSERT INTO knowledge_categories (name, sort) VALUES
@@ -285,11 +330,4 @@ INSERT INTO knowledge_categories (name, sort) VALUES
   ('安全生产隐患排查报告', 15)
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
--- ============================================================================
--- 初始化默认部门
--- ============================================================================
-INSERT INTO departments (id, name) VALUES
-  (1, '安全管理部'),
-  (2, '技术排查部'),
-  (3, '综合管理部')
-ON DUPLICATE KEY UPDATE name = VALUES(name);
+-- 企业和部门属于组织主数据，由管理员创建，不预置无归属部门。

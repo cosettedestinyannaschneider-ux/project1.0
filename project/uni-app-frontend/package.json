@@ -4,6 +4,10 @@
   "description": "AI 大模型工具项目 - 统一前端",
   "main": "main.js",
   "scripts": {
+    "dev:h5": "uni",
+    "build:h5": "uni build",
+    "dev:mp-weixin": "uni dev -p mp-weixin",
+    "build:mp-weixin": "uni build -p mp-weixin",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

@@ -23,10 +23,6 @@
         </view>
         <button class="submit-btn" type="primary" :loading="loading" @click="handleLogin">登录系统</button>
         <view class="register-link">
-          <text class="text-muted">新用户？</text>
-          <text class="link-text" @click="goToRegister">创建账号</text>
-        </view>
-        <view class="register-link">
           <text class="text-muted">连接不上？</text>
           <text class="link-text" @click="goToSettings">服务器设置</text>
         </view>
@@ -71,7 +67,7 @@ const handleLogin = () => {
         uni.showToast({ title: '登录成功', icon: 'success' })
         setTimeout(() => {
           if (nextUser.role === 'admin') {
-            uni.reLaunch({ url: '/pages/admin/admin' })
+            uni.reLaunch({ url: '/pages/workbench/workbench' })
           } else {
             uni.reLaunch({ url: '/pages/process/process' })
           }
@@ -88,10 +84,6 @@ const handleLogin = () => {
       loading.value = false
     }
   })
-}
-
-const goToRegister = () => {
-  uni.navigateTo({ url: '/pages/register/register' })
 }
 
 const goToSettings = () => {

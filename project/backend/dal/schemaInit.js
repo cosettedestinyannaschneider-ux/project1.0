@@ -3,20 +3,22 @@ const db = require('./db')
 /**
  * 数据库结构初始化与迁移模块
  *
- * 采用渐进式 ALTER：对已有表只增列、不改列，所有操作通过 try/catch 保证幂等。
- * 服务器每次启动时执行，确保数据库结构与代码保持同步。
+ * 采用渐进式 ALTER：仅处理低风险补充结构，所有操作通过存在性检查保证幂等。
+ * 企业、部门和用户的旧数据关系必须使用独立迁移 SQL，禁止在服务启动时静默迁移。
  */
 const schemaInit = {
   async init() {
     console.log('[schemaInit] 开始检查数据库结构...')
 
-    // FK 依赖顺序：departments → users → enterprises → sessions → inspection_reports
+    // FK 依赖顺序：enterprises → departments → users → user_permissions
+    //              → sessions → inspection_reports
     //              → inspection_report_images → hazard_images → action_logs
     //              → knowledge_categories → knowledge
     //              → ai_model_configs → report_templates
+    await this.step03_enterprises()
     await this.step01_departments()
     await this.step02_users()
-    await this.step03_enterprises()
+    await this.step02UserPermissions()
     await this.step04_sessions()
     await this.step05_inspectionReports()
     await this.step06_inspectionReportImages()
@@ -26,6 +28,7 @@ const schemaInit = {
     await this.step10_actionLogs()
     await this.step11_aiModelConfigs()
     await this.step12_reportTemplates()
+    await this.step13BackupRecords()
 
     console.log('[schemaInit] 数据库结构检查完成')
   },
@@ -67,21 +70,29 @@ const schemaInit = {
   },
 
   // =========================================================================
-  // Step 1: 部门表（立项书：用户需填写所属部门）
+  // Step 1: 部门表（企业 1:N 部门）
   // =========================================================================
   async step01_departments() {
-    if (await this._hasTable('departments')) return
+    if (await this._hasTable('departments')) {
+      if (!await this._hasColumn('departments', 'enterprise_id')) {
+        console.warn('[schemaInit] departments.enterprise_id 尚未迁移，请执行阶段 A 独立迁移 SQL')
+      }
+      return
+    }
     await db.execute(`
       CREATE TABLE IF NOT EXISTS departments (
-        id          INT           NOT NULL AUTO_INCREMENT,
-        name        VARCHAR(100)  NOT NULL,
-        created_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        id             INT           NOT NULL AUTO_INCREMENT,
+        enterprise_id  INT           NOT NULL,
+        name           VARCHAR(100)  NOT NULL,
+        created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
-        UNIQUE KEY uk_departments_name (name)
+        UNIQUE KEY uk_departments_enterprise_name (enterprise_id, name),
+        KEY idx_departments_enterprise_id (enterprise_id),
+        CONSTRAINT fk_departments_enterprise
+          FOREIGN KEY (enterprise_id) REFERENCES enterprises (id)
+          ON DELETE RESTRICT ON UPDATE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
-    await db.execute(`INSERT IGNORE INTO departments (id, name) VALUES
-      (1, '安全管理部'), (2, '技术排查部'), (3, '综合管理部')`)
     console.log('[schemaInit] departments 已创建')
   },
 
@@ -117,9 +128,60 @@ const schemaInit = {
   },
 
   // =========================================================================
+  // Step 2.1: 用户权限关联表
+  // =========================================================================
+  async step02UserPermissions() {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS user_permissions (
+        user_id         INT          NOT NULL,
+        permission_key  VARCHAR(100) NOT NULL,
+        created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, permission_key),
+        KEY idx_user_permissions_permission_key (permission_key),
+        CONSTRAINT fk_user_permissions_user
+          FOREIGN KEY (user_id) REFERENCES users (id)
+          ON DELETE CASCADE ON UPDATE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `)
+  },
+
+  // =========================================================================
   // Step 3: 企业表（PK 从 user_id 迁移到独立 id）
   // =========================================================================
   async step03_enterprises() {
+    if (!await this._hasTable('enterprises')) {
+      await db.execute(`
+        CREATE TABLE enterprises (
+          id                INT           NOT NULL AUTO_INCREMENT,
+          user_id           INT           DEFAULT NULL,
+          name              VARCHAR(200)  NOT NULL,
+          region            VARCHAR(200)  DEFAULT NULL,
+          address           VARCHAR(500)  DEFAULT NULL,
+          contact           VARCHAR(100)  DEFAULT NULL,
+          phone             VARCHAR(50)   DEFAULT NULL,
+          industry          VARCHAR(100)  DEFAULT NULL,
+          enterprise_type   VARCHAR(100)  DEFAULT NULL,
+          scale             VARCHAR(50)   DEFAULT NULL,
+          production_process TEXT         DEFAULT NULL,
+          inspector_name    VARCHAR(100)  DEFAULT NULL,
+          inspection_date   DATE          DEFAULT NULL,
+          inspection_status ENUM('pending','inspecting','rectification','completed') NOT NULL DEFAULT 'pending',
+          project_name      VARCHAR(200)  DEFAULT NULL,
+          status            VARCHAR(20)   NOT NULL DEFAULT 'active',
+          created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_enterprises_user_id (user_id),
+          KEY idx_enterprises_name (name),
+          KEY idx_enterprises_region (region),
+          KEY idx_enterprises_inspection_status (inspection_status),
+          KEY idx_enterprises_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `)
+      console.log('[schemaInit] enterprises 已创建')
+      return
+    }
+
     const hasId = await this._hasColumn('enterprises', 'id')
 
     if (!hasId) {
@@ -138,6 +200,7 @@ const schemaInit = {
       'production_process TEXT DEFAULT NULL',
       'inspector_name VARCHAR(100) DEFAULT NULL',
       'inspection_date DATE DEFAULT NULL',
+      "inspection_status ENUM('pending','inspecting','rectification','completed') NOT NULL DEFAULT 'pending'",
       'project_name VARCHAR(200) DEFAULT NULL',
       "status VARCHAR(20) NOT NULL DEFAULT 'active'",
       'updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
@@ -149,10 +212,11 @@ const schemaInit = {
     await this._addIndex('enterprises', 'idx_enterprises_name', 'KEY idx_enterprises_name (name(100))')
     await this._addIndex('enterprises', 'idx_enterprises_region', 'KEY idx_enterprises_region (region(100))')
     await this._addIndex('enterprises', 'idx_enterprises_status', 'KEY idx_enterprises_status (status)')
+    await this._addIndex('enterprises', 'idx_enterprises_inspection_status', 'KEY idx_enterprises_inspection_status (inspection_status)')
 
-    // 外键
-    await this._addFK('enterprises', 'fk_enterprises_user',
-      'FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE')
+    if (!await this._hasColumn('departments', 'enterprise_id')) {
+      console.warn('[schemaInit] enterprises.user_id 保留旧关系，请执行阶段 A 独立迁移 SQL 后再启用组织关系')
+    }
   },
 
   // =========================================================================
@@ -411,36 +475,44 @@ const schemaInit = {
   // Step 11: AI 模型配置表（替代 .env 硬编码）
   // =========================================================================
   async step11_aiModelConfigs() {
-    if (await this._hasTable('ai_model_configs')) return
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS ai_model_configs (
-        id                INT           NOT NULL AUTO_INCREMENT,
-        name              VARCHAR(100)  NOT NULL,
-        base_url          VARCHAR(500)  NOT NULL,
-        api_key_encrypted VARCHAR(500)  NOT NULL,
-        model_name        VARCHAR(100)  NOT NULL,
-        is_active         TINYINT(1)    NOT NULL DEFAULT 0,
-        max_tokens        INT           NOT NULL DEFAULT 4096,
-        temperature       DECIMAL(3,2)  NOT NULL DEFAULT 0.70,
-        timeout_ms        INT           NOT NULL DEFAULT 60000,
-        created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        KEY idx_amc_is_active (is_active)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `)
+    if (!await this._hasTable('ai_model_configs')) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS ai_model_configs (
+          id                INT           NOT NULL AUTO_INCREMENT,
+          name              VARCHAR(100)  NOT NULL,
+          provider          VARCHAR(100)  NOT NULL,
+          base_url          VARCHAR(500)  NOT NULL,
+          api_key_encrypted VARCHAR(500)  NOT NULL,
+          model_name        VARCHAR(100)  NOT NULL,
+          is_active         TINYINT(1)    NOT NULL DEFAULT 0,
+          max_tokens        INT           NOT NULL DEFAULT 4096,
+          temperature       DECIMAL(3,2)  NOT NULL DEFAULT 0.70,
+          timeout_ms        INT           NOT NULL DEFAULT 60000,
+          created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_amc_is_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `)
 
-    // 从 .env 读取当前配置写入种子数据
-    const baseUrl = process.env.ARK_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3'
-    const apiKey = process.env.ARK_API_KEY || ''
-    const model = process.env.ARK_MODEL || 'deepseek-v3'
-    try {
-      await db.execute(
-        'INSERT IGNORE INTO ai_model_configs (name, base_url, api_key_encrypted, model_name, is_active) VALUES (?, ?, ?, ?, 1)',
-        ['default', baseUrl, apiKey, model]
-      )
-    } catch (e) { /* 忽略 */ }
-    console.log('[schemaInit] ai_model_configs 已创建')
+      // 从 .env 读取当前配置写入种子数据。
+      const baseUrl = process.env.ARK_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3'
+      const apiKey = process.env.ARK_API_KEY || ''
+      const model = process.env.ARK_MODEL || 'deepseek-v3'
+      try {
+        await db.execute(
+          'INSERT IGNORE INTO ai_model_configs (name, provider, base_url, api_key_encrypted, model_name, is_active) VALUES (?, ?, ?, ?, ?, 1)',
+          ['default', '豆包', baseUrl, apiKey, model]
+        )
+      } catch (e) { /* 忽略 */ }
+      console.log('[schemaInit] ai_model_configs 已创建')
+      return
+    }
+
+    if (!await this._hasColumn('ai_model_configs', 'provider')) {
+      await this._addColumn('ai_model_configs', 'provider VARCHAR(100) DEFAULT NULL')
+      console.warn('[schemaInit] ai_model_configs.provider 已添加；旧数据回填请执行阶段 A 独立迁移 SQL')
+    }
   },
 
   // =========================================================================
@@ -461,6 +533,35 @@ const schemaInit = {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `)
     console.log('[schemaInit] report_templates 已创建')
+  },
+
+  // =========================================================================
+  // Step 13: 数据库备份记录表
+  // =========================================================================
+  async step13BackupRecords() {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS backup_records (
+        id            BIGINT        NOT NULL AUTO_INCREMENT,
+        file_name     VARCHAR(255)  NOT NULL,
+        file_path     VARCHAR(500)  NOT NULL,
+        file_size     BIGINT UNSIGNED DEFAULT NULL,
+        backup_type   VARCHAR(20)   NOT NULL DEFAULT 'manual',
+        status        VARCHAR(20)   NOT NULL DEFAULT 'pending',
+        error_message TEXT          DEFAULT NULL,
+        created_by    INT           DEFAULT NULL,
+        started_at    DATETIME      DEFAULT NULL,
+        completed_at  DATETIME      DEFAULT NULL,
+        created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_backup_records_status (status),
+        KEY idx_backup_records_type (backup_type),
+        KEY idx_backup_records_created_by (created_by),
+        KEY idx_backup_records_created_at (created_at),
+        CONSTRAINT fk_backup_records_created_by
+          FOREIGN KEY (created_by) REFERENCES users (id)
+          ON DELETE SET NULL ON UPDATE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `)
   },
 }
 

@@ -29,11 +29,12 @@ const userDal = {
     let sql = `SELECT u.id, u.username, u.role, u.status, u.department_id,
                       u.last_login_at, u.created_at,
                       d.name AS department_name,
-                      d.enterprise_id,
-                      e.name AS enterprise_name
+                      COALESCE(d.enterprise_id, legacy_e.id) AS enterprise_id,
+                      COALESCE(e.name, legacy_e.name) AS enterprise_name
                FROM users u
                LEFT JOIN departments d ON d.id = u.department_id
-               LEFT JOIN enterprises e ON e.id = d.enterprise_id`
+               LEFT JOIN enterprises e ON e.id = d.enterprise_id
+               LEFT JOIN enterprises legacy_e ON legacy_e.user_id = u.id`
     if (!includeDisabled) {
       sql += " WHERE u.status <> 'disabled'"
     }

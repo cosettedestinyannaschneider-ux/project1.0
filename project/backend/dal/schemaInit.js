@@ -63,6 +63,21 @@ const schemaInit = {
     catch (e) { /* 索引已存在则忽略 */ }
   },
 
+  /** 检查索引是否存在 */
+  async _hasIndex(table, indexName) {
+    try {
+      const [rows] = await db.execute(`SHOW INDEX FROM \`${table}\` WHERE Key_name = '${indexName}'`)
+      return rows.length > 0
+    } catch { return false }
+  },
+
+  /** 安全删除旧索引：不存在则跳过 */
+  async _dropIndex(table, indexName) {
+    if (!await this._hasIndex(table, indexName)) return
+    try { await db.execute(`ALTER TABLE \`${table}\` DROP INDEX \`${indexName}\``) }
+    catch (e) { /* 索引不存在或无法删除则忽略 */ }
+  },
+
   /** 安全添加外键：存在则跳过 */
   async _addFK(table, fkName, fkDef) {
     try { await db.execute(`ALTER TABLE \`${table}\` ADD CONSTRAINT ${fkName} ${fkDef}`) }
@@ -75,8 +90,14 @@ const schemaInit = {
   async step01_departments() {
     if (await this._hasTable('departments')) {
       if (!await this._hasColumn('departments', 'enterprise_id')) {
-        console.warn('[schemaInit] departments.enterprise_id 尚未迁移，请执行阶段 A 独立迁移 SQL')
+        await this._addColumn('departments', 'enterprise_id INT DEFAULT NULL')
+        console.warn('[schemaInit] departments.enterprise_id 已补齐；旧部门暂未绑定企业，请在管理员端完成组织归属整理')
       }
+      await this._dropIndex('departments', 'uk_departments_name')
+      await this._addIndex('departments', 'uk_departments_enterprise_name', 'UNIQUE KEY uk_departments_enterprise_name (enterprise_id, name)')
+      await this._addIndex('departments', 'idx_departments_enterprise_id', 'KEY idx_departments_enterprise_id (enterprise_id)')
+      await this._addFK('departments', 'fk_departments_enterprise',
+        'FOREIGN KEY (enterprise_id) REFERENCES enterprises (id) ON DELETE RESTRICT ON UPDATE CASCADE')
       return
     }
     await db.execute(`

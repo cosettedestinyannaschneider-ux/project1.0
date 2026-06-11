@@ -60,13 +60,13 @@
       <view class="enterprise-head" @click="toggle(item.id)">
         <view class="enterprise-main">
           <view class="name-row">
-            <text class="enterprise-name">{{ item.name }}</text>
+            <text class="enterprise-name">{{ normalizeDisplayText(item.name, '未命名企业') }}</text>
             <text class="status-tag" :class="{ archived: item.status === 'archived' }">{{ item.status === 'active' ? '正常' : '已归档' }}</text>
             <text class="inspection-tag">{{ getInspectionStatusLabel(item.inspection_status) }}</text>
             <text class="risk-tag" :class="{ high: item.risk_level === '高风险' }">{{ item.risk_level }}</text>
           </view>
-          <text class="enterprise-meta">{{ item.region }} · {{ item.industry }} · {{ item.enterprise_type }} · {{ item.scale }}</text>
-          <text class="enterprise-address">{{ item.address }}</text>
+          <text class="enterprise-meta">{{ buildEnterpriseMeta(item) }}</text>
+          <text class="enterprise-address">{{ normalizeDisplayText(item.address) }}</text>
         </view>
         <view class="head-actions"><text class="edit-link" @click.stop="openEdit(item)">编辑信息</text><text class="expand-link">{{ expandedId === item.id ? '收起详情' : '查看详情' }}</text></view>
       </view>
@@ -86,12 +86,12 @@
         <view class="detail-section">
           <text class="section-title">企业基础档案</text>
           <view class="detail-grid">
-            <view><text class="detail-label">企业名称</text><text>{{ item.name }}</text></view>
-            <view><text class="detail-label">企业类型</text><text>{{ item.enterprise_type || '-' }}</text></view>
-            <view><text class="detail-label">企业规模</text><text>{{ item.scale || '-' }}</text></view>
-            <view><text class="detail-label">所属行业</text><text>{{ item.industry || '-' }}</text></view>
-            <view class="full-row"><text class="detail-label">详细地址</text><text>{{ item.address || '-' }}</text></view>
-            <view class="full-row"><text class="detail-label">生产工艺</text><text>{{ item.production_process || '-' }}</text></view>
+            <view><text class="detail-label">企业名称</text><text>{{ normalizeDisplayText(item.name, '未命名企业') }}</text></view>
+            <view><text class="detail-label">企业类型</text><text>{{ normalizeDisplayText(item.enterprise_type) }}</text></view>
+            <view><text class="detail-label">企业规模</text><text>{{ normalizeDisplayText(item.scale) }}</text></view>
+            <view><text class="detail-label">所属行业</text><text>{{ normalizeDisplayText(item.industry) }}</text></view>
+            <view class="full-row"><text class="detail-label">详细地址</text><text>{{ normalizeDisplayText(item.address) }}</text></view>
+            <view class="full-row"><text class="detail-label">生产工艺</text><text>{{ normalizeDisplayText(item.production_process) }}</text></view>
           </view>
         </view>
 
@@ -99,14 +99,14 @@
         <view class="detail-section">
           <text class="section-title">联系与检查信息</text>
           <view class="detail-grid">
-            <view><text class="detail-label">企业联系人</text><text>{{ item.contact || '-' }}</text></view>
-            <view><text class="detail-label">联系电话</text><text>{{ item.phone || '-' }}</text></view>
-            <view><text class="detail-label">所属检查员</text><text>{{ item.username || '-' }}</text></view>
-            <view><text class="detail-label">现场排查人员</text><text>{{ item.inspector_name || '-' }}</text></view>
-            <view><text class="detail-label">最近排查日期</text><text>{{ item.inspection_date || '-' }}</text></view>
+            <view><text class="detail-label">企业联系人</text><text>{{ normalizeDisplayText(item.contact) }}</text></view>
+            <view><text class="detail-label">联系电话</text><text>{{ normalizeDisplayText(item.phone) }}</text></view>
+            <view><text class="detail-label">所属检查员</text><text>{{ normalizeDisplayText(item.username) }}</text></view>
+            <view><text class="detail-label">现场排查人员</text><text>{{ normalizeDisplayText(item.inspector_name) }}</text></view>
+            <view><text class="detail-label">最近排查日期</text><text>{{ normalizeDisplayText(item.inspection_date) }}</text></view>
             <view><text class="detail-label">排查状态</text><text>{{ getInspectionStatusLabel(item.inspection_status) }}</text></view>
             <view><text class="detail-label">当前风险等级</text><text>{{ item.risk_level }}</text></view>
-            <view><text class="detail-label">最新保存时间</text><text>{{ item.updated_at }}</text></view>
+            <view><text class="detail-label">最新保存时间</text><text>{{ normalizeDisplayText(item.updated_at) }}</text></view>
           </view>
         </view>
 
@@ -121,17 +121,17 @@
         <view class="detail-section">
           <text class="section-title">专属隐患排查档案</text>
           <view class="archive-grid">
-            <view><text class="archive-title">关联隐患图片</text><text v-for="image in item.recent_images" :key="image" class="archive-item">{{ image }}</text></view>
-            <view><text class="archive-title">关联分析结果</text><text v-for="analysis in item.recent_analyses" :key="analysis" class="archive-item">{{ analysis }}</text></view>
+            <view><text class="archive-title">关联隐患图片</text><text v-for="image in normalizeList(item.recent_images, '暂无关联图片')" :key="'image-' + image" class="archive-item">{{ image }}</text></view>
+            <view><text class="archive-title">关联分析结果</text><text v-for="analysis in normalizeList(item.recent_analyses, '暂无关联分析')" :key="'analysis-' + analysis" class="archive-item">{{ analysis }}</text></view>
           </view>
         </view>
 
         <!-- 企业关联报告记录 -->
         <view class="detail-section">
           <text class="section-title">报告记录</text>
-          <view v-if="item.reports.length === 0" class="no-report">暂无报告记录</view>
-          <view v-for="report in item.reports" :key="report.id" class="report-row">
-            <view><text class="report-name">{{ report.title }}</text><text class="report-date">{{ report.created_at }}</text></view>
+          <view v-if="!item.reports || item.reports.length === 0" class="no-report">暂无报告记录</view>
+          <view v-for="report in item.reports || []" :key="report.id" class="report-row">
+            <view><text class="report-name">{{ normalizeDisplayText(report.title, '未命名报告') }}</text><text class="report-date">{{ normalizeDisplayText(report.created_at, '时间未知') }}</text></view>
             <view><text class="download-link" @click="downloadReport(report, 'word')">Word</text><text class="download-link" @click="downloadReport(report, 'pdf')">PDF</text></view>
           </view>
         </view>
@@ -229,6 +229,38 @@ const postAdmin = (path, payload = {}) => new Promise((resolve, reject) => {
 /** 展示接口错误提示 */
 const showRequestError = (error) => {
   uni.showToast({ title: error?.message || '操作失败', icon: 'none' })
+}
+
+/** 前端兜底展示文本，避免空值、问号占位或明显乱码影响演示观感 */
+const normalizeDisplayText = (value, fallback = '未填写') => {
+  if (value === null || value === undefined) return fallback
+  const text = String(value).trim()
+  if (!text) return fallback
+  const compact = text.replace(/\s+/g, '')
+  if (!compact) return fallback
+  if (/^[?？]+$/.test(compact)) return fallback
+  const suspiciousCount = (text.match(/[?？�]/g) || []).length
+  if (suspiciousCount >= 2 && suspiciousCount / text.length >= 0.3) return fallback
+  return text
+}
+
+/** 企业头部副标题：仅展示可读字段，全部缺失时统一兜底 */
+const buildEnterpriseMeta = (item) => {
+  const parts = [
+    normalizeDisplayText(item.region, ''),
+    normalizeDisplayText(item.industry, ''),
+    normalizeDisplayText(item.enterprise_type, ''),
+    normalizeDisplayText(item.scale, '')
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : '未填写'
+}
+
+/** 列表型字段统一兜底，避免空数组时面板留白 */
+const normalizeList = (values, fallback = '暂无记录') => {
+  const list = Array.isArray(values)
+    ? values.map((item) => normalizeDisplayText(item, '')).filter(Boolean)
+    : []
+  return list.length ? list : [fallback]
 }
 
 /** 根据全部查询条件筛选企业 */

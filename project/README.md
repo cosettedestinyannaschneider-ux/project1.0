@@ -100,6 +100,30 @@ ER 图详见：[../er-diagram.md](../er-diagram.md)
    - 配置 AI 密钥 (`ARK_API_KEY`, `ARK_MODEL`)。
 4. 启动服务：`npm start` (默认运行在 3000 端口)。3000端口被占用：win11命令行执行:netstat -ano | findstr 3000   查看占用进程，终止后重试。=> taskkill /PID **** /F
 
+### 1.1 可选：导入最小演示数据
+
+仓库提供了一份**可选**的最小演示数据文件 [database/demo_seed.sql](./database/demo_seed.sql)，用于本地评审或课堂演示快速生成基础账号和样例组织数据。
+
+- 适用场景：希望拉起项目后立即看到一套可登录、可进入管理端、可查看企业档案的最小数据。
+- 非必需：正式开发、联调或自定义数据库环境可以完全跳过这一步。
+- 导入前提：已完成 `schema.sql` 导入，或已至少启动一次后端，让 `schemaInit` 完成建表与兼容迁移。
+
+演示数据包含：
+
+- 管理员账号：`admin_demo` / `DemoAdmin123!`
+- 普通用户账号：`demo_user` / `DemoUser123!`
+- 1 家演示企业：`演示建筑企业`
+- 1 个演示部门：`安全管理部`
+
+导入方式任选其一：
+
+- 使用数据库图形工具执行 [database/demo_seed.sql](./database/demo_seed.sql)
+- 或在已安装 MySQL 客户端的环境中执行：
+
+```powershell
+mysql -u root -p ai_project < project\database\demo_seed.sql
+```
+
 ### 2. 统一前端 (uni-app)
 
 1. 使用 **VS Code** 或 **HBuilderX** 导入 `uni-app-frontend` 目录。
@@ -192,5 +216,6 @@ ER 图详见：[../er-diagram.md](../er-diagram.md)
 - **网络连接**：小程序端需与后端处于同一局域网；如无法访问后端，请在登录页“服务器设置”中填写正确的局域网 IP/端口。
 - **联调 IP**：当前电脑 WLAN IPv4 为 `192.168.1.66`，如果你使用的是其他网络，请以 `ipconfig` 输出为准更新“服务器设置”。
 - **权限与注册**：注册默认创建普通用户账号；管理员账号建议由数据库初始化或管理员后台创建。
+- **演示数据**：`database/demo_seed.sql` 仅提供最小演示样例，不会替代你自己的数据库初始化、AI 配置或真实业务数据准备。
 - **字体配置**：PDF 生成需依赖 `C:/Windows/Fonts/simhei.ttf`，请确保服务器端系统路径正确。
 - **端口管理**：若提示端口 3000 被占用，请使用 `netstat -ano | findstr :3000` 结束相关进程。
